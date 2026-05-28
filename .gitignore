@@ -56,3 +56,5 @@ Thumbs.db
 
 # Node modules (if applicable)
 node_modules/
+
+data/
