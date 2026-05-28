@@ -1,0 +1,2549 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reconciliation Tool - Enterprise</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E📊%3C/text%3E%3C/svg%3E">
+    <!-- Suppress console noise from CDN warnings and browser extensions -->
+    <script>
+        (function() {
+            const originalWarn = console.warn;
+            console.warn = function(...args) {
+                const msg = args.join(' ');
+                if (msg.includes('cdn.tailwindcss.com') && msg.includes('production')) return;
+                if (msg.includes('SES Removing unpermitted intrinsics')) return;
+                originalWarn.apply(console, args);
+            };
+            const originalLog = console.log;
+            console.log = function(...args) {
+                const msg = args.join(' ');
+                if (msg.includes('lockdown-install.js') && msg.includes('SES')) return;
+                originalLog.apply(console, args);
+            };
+        })();
+    </script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .glass { background: rgba(255,255,255,0.95); backdrop-filter: blur(10px); }
+        .sidebar-link { transition: all 0.2s; border-radius: 0.5rem; }
+        .sidebar-link:hover, .sidebar-link.active { background: #1e40af; color: white; }
+        .sidebar-link.active { box-shadow: 0 2px 8px rgba(30,64,175,0.3); }
+        
+        /* Collapsed sidebar styles */
+        .sidebar-collapsed { width: 64px !important; }
+        .sidebar-collapsed .sidebar-text { display: none; }
+        .sidebar-collapsed #app-title, .sidebar-collapsed #app-subtitle { display: none; }
+        .sidebar-collapsed #user-name, .sidebar-collapsed #user-role { display: none; }
+        .sidebar-collapsed .sidebar-link { justify-content: center; padding-left: 0.75rem; padding-right: 0.75rem; }
+        .sidebar-collapsed .sidebar-link i { margin-right: 0; }
+        .sidebar-collapsed #sidebar-toggle-btn i { transform: rotate(180deg); }
+        .main-content-expanded { margin-left: 64px !important; }
+        
+        @media (max-width: 1024px) {
+            .sidebar-collapsed { width: 64px !important; }
+            .main-content-expanded { margin-left: 0 !important; }
+        }
+        .card { background: white; border-radius: 0.75rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); transition: box-shadow 0.2s; }
+        .card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+        .btn-primary { background: #1e40af; color: white; transition: all 0.2s; }
+        .btn-primary:hover { background: #1e3a8a; transform: translateY(-1px); }
+        .btn-danger { background: #dc2626; color: white; }
+        .btn-danger:hover { background: #b91c1c; }
+        .btn-success { background: #059669; color: white; }
+        .btn-success:hover { background: #047857; }
+        .input-focus:focus { ring: 2px; ring-color: #1e40af; border-color: #1e40af; }
+        .toast { animation: slideIn 0.3s ease-out; }
+        @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        .fade-in { animation: fadeIn 0.3s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .spinner { border: 3px solid #f3f3f3; border-top: 3px solid #1e40af; border-radius: 50%; width: 24px; height: 24px; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .password-strength { height: 4px; border-radius: 2px; transition: all 0.3s; }
+        .modal-overlay { background: rgba(0,0,0,0.5); backdrop-filter: blur(4px); }
+        .page-section { display: none; }
+        .page-section.active { display: block; animation: fadeIn 0.3s ease-out; }
+        .tab-btn { transition: all 0.2s; }
+        .tab-btn.active { border-bottom: 2px solid #1e40af; color: #1e40af; font-weight: 600; }
+        .drop-zone { border: 2px dashed #cbd5e1; transition: all 0.3s; }
+        .drop-zone.dragover { border-color: #1e40af; background: #eff6ff; }
+        .folder-tree-item { cursor: pointer; transition: all 0.2s; }
+        .folder-tree-item:hover { background: #f3f4f6; }
+        .folder-selected { background: #dbeafe; border-left: 3px solid #1e40af; }
+        .file-row:hover { background: #f9fafb; }
+        .rule-row { border-left: 4px solid #1e40af; }
+        .badge { font-size: 0.75rem; padding: 0.25rem 0.5rem; border-radius: 9999px; font-weight: 500; }
+        .badge-blue { background: #dbeafe; color: #1e40af; }
+        .badge-green { background: #d1fae5; color: #065f46; }
+        .badge-red { background: #fee2e2; color: #991b1b; }
+        .badge-yellow { background: #fef3c7; color: #92400e; }
+        .badge-gray { background: #f3f4f6; color: #4b5563; }
+        .tooltip { position: relative; }
+        .tooltip:hover::after { content: attr(data-tip); position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); background: #1f2937; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; white-space: nowrap; z-index: 50; }
+        /* Scrollbar styling */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #f1f5f9; }
+        ::-webkit-scrollbar-thumb { background: #94a3b8; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+    </style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<!-- Toast Container -->
+<div id="toast-container" class="fixed top-4 right-4 z-[100] space-y-2"></div>
+
+<!-- ==================== LOGIN SCREEN ==================== -->
+<div id="login-screen" class="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900">
+    <div class="w-full max-w-md p-8">
+        <div class="glass rounded-2xl p-8 shadow-2xl">
+            <div class="text-center mb-8">
+                <div class="w-16 h-16 bg-blue-600 rounded-xl flex items-center justify-center mx-auto mb-4 shadow-lg">
+                    <i class="fas fa-chart-bar text-2xl text-white"></i>
+                </div>
+                <h1 class="text-2xl font-bold text-gray-900" id="login-title">Reconciliation Tool</h1>
+                <p class="text-gray-500 text-sm mt-1">Enterprise Reconciliation System</p>
+            </div>
+            
+            <form id="login-form" onsubmit="handleLogin(event)">
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Email Address</label>
+                        <input type="email" id="login-email" required class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all" placeholder="you@company.com">
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                        <div class="relative">
+                            <input type="password" id="login-password" required class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all" placeholder="Enter your password">
+                            <button type="button" onclick="togglePassword('login-password')" class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div id="company-code-field">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Company Code</label>
+                        <input type="text" id="login-company-code" class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all uppercase" placeholder="e.g., ACME001">
+                        <p class="text-xs text-gray-500 mt-1">Leave blank for Super Admin login</p>
+                    </div>
+                </div>
+                
+                <button type="submit" id="login-btn" class="w-full btn-primary py-3 rounded-lg font-semibold mt-6 flex items-center justify-center gap-2">
+                    <span>Sign In</span>
+                    <div id="login-spinner" class="spinner hidden" style="width:18px;height:18px;border-width:2px;"></div>
+                </button>
+            </form>
+            
+            <div class="mt-6 text-center">
+                <p class="text-xs text-gray-500">Default Super Admin: admin@reconciliation.com / SuperAdmin@123</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== FORCE PASSWORD CHANGE SCREEN ==================== -->
+<div id="force-change-screen" class="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 hidden">
+    <div class="w-full max-w-md p-8">
+        <div class="glass rounded-2xl p-8 shadow-2xl">
+            <div class="text-center mb-8">
+                <div class="w-16 h-16 bg-yellow-500 rounded-xl flex items-center justify-center mx-auto mb-4 shadow-lg">
+                    <i class="fas fa-lock text-2xl text-white"></i>
+                </div>
+                <h1 class="text-2xl font-bold text-gray-900">Change Password Required</h1>
+                <p class="text-gray-500 text-sm mt-1">For security, please create a new password</p>
+            </div>
+            
+            <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
+                <div class="flex items-start gap-3">
+                    <i class="fas fa-exclamation-triangle text-yellow-600 mt-0.5"></i>
+                    <div class="text-sm text-yellow-800">
+                        <p class="font-semibold mb-1">Password Requirements:</p>
+                        <ul class="list-disc list-inside space-y-0.5 text-xs">
+                            <li>Minimum 8 characters</li>
+                            <li>At least one uppercase letter</li>
+                            <li>At least one lowercase letter</li>
+                            <li>At least one number</li>
+                            <li>At least one special character</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+            
+            <form id="force-change-form" onsubmit="handleForceChange(event)">
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">New Password</label>
+                        <div class="relative">
+                            <input type="password" id="force-new-password" required oninput="checkPasswordStrength(this.value)" class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all" placeholder="Create strong password">
+                        </div>
+                        <div class="mt-2">
+                            <div class="password-strength bg-gray-200" id="password-strength-bar"></div>
+                            <p class="text-xs mt-1" id="password-strength-text">Enter password to check strength</p>
+                        </div>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Confirm Password</label>
+                        <input type="password" id="force-confirm-password" required class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all" placeholder="Confirm new password">
+                    </div>
+                </div>
+                
+                <button type="submit" id="force-change-btn" class="w-full btn-primary py-3 rounded-lg font-semibold mt-6 flex items-center justify-center gap-2">
+                    <span>Update Password</span>
+                    <div id="force-spinner" class="spinner hidden" style="width:18px;height:18px;border-width:2px;"></div>
+                </button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== MAIN APP SHELL ==================== -->
+<div id="app-shell" class="hidden min-h-screen flex">
+    <!-- Sidebar -->
+    <aside class="w-64 bg-slate-900 text-white flex flex-col fixed h-full z-40 transition-all duration-300" id="sidebar">
+        <div class="p-4 border-b border-slate-700 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center flex-shrink-0">
+                    <i class="fas fa-chart-bar text-lg"></i>
+                </div>
+                <div class="sidebar-text">
+                    <h2 class="font-bold text-lg leading-tight" id="app-title">Reconciliation</h2>
+                    <p class="text-xs text-slate-400" id="app-subtitle">Enterprise</p>
+                </div>
+            </div>
+            <button onclick="toggleSidebarCollapse()" id="sidebar-toggle-btn" class="hidden lg:flex w-8 h-8 items-center justify-center rounded-lg hover:bg-slate-700 transition-colors text-slate-400 hover:text-white" title="Collapse sidebar">
+                <i class="fas fa-chevron-left text-sm transition-transform"></i>
+            </button>
+        </div>
+        
+        <nav class="flex-1 p-4 space-y-1 overflow-y-auto" id="sidebar-nav">
+            <!-- Dynamic nav items inserted here -->
+        </nav>
+        
+        <div class="p-4 border-t border-slate-700">
+            <div class="flex items-center gap-3 mb-3">
+                <div class="w-8 h-8 bg-slate-700 rounded-full flex items-center justify-center">
+                    <i class="fas fa-user text-sm"></i>
+                </div>
+                <div class="flex-1 min-w-0">
+                    <p class="text-sm font-medium truncate" id="user-name">User</p>
+                    <p class="text-xs text-slate-400 truncate" id="user-role">Role</p>
+                </div>
+            </div>
+            <button onclick="toggleProfileMenu()" class="w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm text-slate-300 transition-colors flex items-center gap-2">
+                <i class="fas fa-cog"></i><span class="sidebar-text">Profile</span>
+            </button>
+            <button onclick="handleLogout()" class="w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-sm text-red-400 transition-colors flex items-center gap-2 mt-1">
+                <i class="fas fa-sign-out-alt"></i><span class="sidebar-text">Sign Out</span>
+            </button>
+        </div>
+    </aside>
+
+    <!-- Mobile sidebar overlay -->
+    <div id="sidebar-overlay" onclick="toggleSidebar()" class="fixed inset-0 bg-black/50 z-30 hidden lg:hidden"></div>
+
+    <!-- Main Content -->
+    <div class="flex-1 lg:ml-64 min-h-screen flex flex-col" id="main-content-wrapper">
+        <!-- Top Bar -->
+        <header class="bg-white border-b border-gray-200 sticky top-0 z-20 px-6 py-3 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <button onclick="toggleSidebar()" class="lg:hidden p-2 rounded-lg hover:bg-gray-100">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <h2 class="text-xl font-semibold text-gray-800" id="page-title">Company Insight</h2>
+            </div>
+            <div class="flex items-center gap-3">
+                <span class="badge badge-blue" id="company-badge" style="display:none">Company</span>
+                
+                <!-- Company Switcher (Super Admin only) -->
+                <div class="relative" id="company-switcher-container" style="display:none;">
+                    <button onclick="toggleCompanyDropdown()" id="company-switcher-btn" class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 text-sm font-medium hover:bg-blue-100 transition-colors border border-blue-200">
+                        <i class="fas fa-building text-xs"></i>
+                        <span id="current-company-name">Select Company</span>
+                        <i class="fas fa-chevron-down text-xs ml-1"></i>
+                    </button>
+                    <div id="company-switcher-dropdown" class="absolute right-0 mt-2 w-64 bg-white rounded-lg shadow-lg border border-gray-200 py-1 hidden z-50">
+                        <div class="px-3 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider border-b border-gray-100">View as Company</div>
+                        <div id="company-switcher-list" class="max-h-64 overflow-y-auto"></div>
+                        <div class="border-t border-gray-100 px-3 py-2">
+                            <button onclick="restoreSuperAdmin()" class="w-full text-left px-2 py-1.5 text-sm text-blue-700 hover:bg-blue-50 rounded flex items-center gap-2 font-medium">
+                                <i class="fas fa-user-shield text-xs"></i> Back to Super Admin
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Module Switcher Dropdown -->
+                <div class="relative" id="module-switcher-container" style="display:none;">
+                    <button onclick="toggleModuleDropdown()" id="module-switcher-btn" class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-green-50 text-green-700 text-sm font-medium hover:bg-green-100 transition-colors border border-green-200">
+                        <i class="fas fa-cubes text-xs"></i>
+                        <span id="current-module-name">Module</span>
+                        <i class="fas fa-chevron-down text-xs ml-1"></i>
+                    </button>
+                    <div id="module-switcher-dropdown" class="absolute right-0 mt-2 w-56 bg-white rounded-lg shadow-lg border border-gray-200 py-1 hidden z-50">
+                        <div class="px-3 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider border-b border-gray-100">Select Module</div>
+                        <div id="module-switcher-list" class="max-h-48 overflow-y-auto"></div>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Impersonation Banner -->
+        <div id="impersonation-banner" class="hidden bg-orange-50 border-b border-orange-200 px-6 py-2 flex items-center justify-between">
+            <div class="flex items-center gap-2 text-sm text-orange-800">
+                <i class="fas fa-user-secret text-orange-600"></i>
+                <span><strong>Impersonating:</strong> You are viewing as <span id="impersonating-company-name" class="font-semibold">Company</span></span>
+            </div>
+            <button onclick="restoreSuperAdmin()" class="text-sm text-orange-700 hover:text-orange-900 font-medium flex items-center gap-1">
+                <i class="fas fa-times-circle"></i> Stop Impersonating
+            </button>
+        </div>
+
+        <!-- Content Area -->
+        <main class="flex-1 p-6 overflow-y-auto" id="main-content">
+            <!-- Dynamic content pages -->
+            
+            <!-- SUPER ADMIN PAGES -->
+            <div id="page-sa-dashboard" class="page-section">
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                    <div class="card p-6">
+                        <div class="flex items-center justify-between mb-4">
+                            <div class="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
+                                <i class="fas fa-building text-blue-600 text-xl"></i>
+                            </div>
+                            <span class="badge badge-blue">Active</span>
+                        </div>
+                        <h3 class="text-2xl font-bold text-gray-900" id="sa-stat-companies">0</h3>
+                        <p class="text-sm text-gray-500">Total Companies</p>
+                    </div>
+                    <div class="card p-6">
+                        <div class="flex items-center justify-between mb-4">
+                            <div class="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
+                                <i class="fas fa-users text-green-600 text-xl"></i>
+                            </div>
+                        </div>
+                        <h3 class="text-2xl font-bold text-gray-900" id="sa-stat-users">0</h3>
+                        <p class="text-sm text-gray-500">Total Users</p>
+                    </div>
+                    <div class="card p-6">
+                        <div class="flex items-center justify-between mb-4">
+                            <div class="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
+                                <i class="fas fa-cubes text-purple-600 text-xl"></i>
+                            </div>
+                        </div>
+                        <h3 class="text-2xl font-bold text-gray-900" id="sa-stat-modules">0</h3>
+                        <p class="text-sm text-gray-500">Modules</p>
+                    </div>
+                    <div class="card p-6">
+                        <div class="flex items-center justify-between mb-4">
+                            <div class="w-12 h-12 bg-yellow-100 rounded-lg flex items-center justify-center">
+                                <i class="fas fa-clock text-yellow-600 text-xl"></i>
+                            </div>
+                        </div>
+                        <h3 class="text-2xl font-bold text-gray-900" id="sa-stat-activity">0</h3>
+                        <p class="text-sm text-gray-500">Recent Activities</p>
+                    </div>
+                </div>
+                
+                <div class="card p-6">
+                    <h3 class="text-lg font-semibold mb-4">Recent Activity</h3>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm">
+                            <thead class="bg-gray-50 text-gray-600">
+                                <tr><th class="px-4 py-3 text-left font-medium">Action</th><th class="px-4 py-3 text-left font-medium">Entity</th><th class="px-4 py-3 text-left font-medium">Details</th><th class="px-4 py-3 text-left font-medium">Time</th></tr>
+                            </thead>
+                            <tbody id="sa-activity-table" class="divide-y divide-gray-100"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div id="page-sa-companies" class="page-section">
+                <div class="flex items-center justify-between mb-6">
+                    <div class="flex gap-2">
+                        <button onclick="openCompanyModal()" class="btn-primary px-4 py-2 rounded-lg flex items-center gap-2">
+                            <i class="fas fa-plus"></i> Add Company
+                        </button>
+                    </div>
+                    <div class="flex gap-2">
+                        <select id="company-filter" onchange="loadCompanies()" class="px-3 py-2 rounded-lg border border-gray-300 text-sm">
+                            <option value="">All Status</option>
+                            <option value="active">Active</option>
+                            <option value="inactive">Inactive</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="card overflow-hidden">
+                    <table class="w-full text-sm">
+                        <thead class="bg-gray-50 text-gray-600">
+                            <tr>
+                                <th class="px-4 py-3 text-left font-medium">Company</th>
+                                <th class="px-4 py-3 text-left font-medium">Code</th>
+                                <th class="px-4 py-3 text-left font-medium">Users</th>
+                                <th class="px-4 py-3 text-left font-medium">Modules</th>
+                                <th class="px-4 py-3 text-left font-medium">Status</th>
+                                <th class="px-4 py-3 text-left font-medium">Created</th>
+                                <th class="px-4 py-3 text-left font-medium">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="companies-table" class="divide-y divide-gray-100"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div id="page-sa-modules" class="page-section">
+                <div class="flex items-center justify-between mb-6">
+                    <button onclick="openModuleModal()" class="btn-primary px-4 py-2 rounded-lg flex items-center gap-2">
+                        <i class="fas fa-plus"></i> Add Module
+                    </button>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" id="modules-grid"></div>
+            </div>
+
+            <div id="page-sa-settings" class="page-section">
+                <div class="max-w-2xl">
+                    <div class="card p-6 mb-6">
+                        <h3 class="text-lg font-semibold mb-4">Website Settings</h3>
+                        <form id="settings-form" onsubmit="saveSettings(event)" class="space-y-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Site Name</label>
+                                <input type="text" id="setting-site-name" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Login Page Title</label>
+                                <input type="text" id="setting-login-title" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Footer Text</label>
+                                <input type="text" id="setting-footer" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Theme Color</label>
+                                <input type="color" id="setting-theme-color" class="w-full h-10 rounded-lg border border-gray-300">
+                            </div>
+                            <button type="submit" class="btn-primary px-4 py-2 rounded-lg">Save Settings</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <div id="page-sa-code-extract" class="page-section">
+                <div class="card p-6">
+                    <h3 class="text-lg font-semibold mb-2">Code Extraction</h3>
+                    <p class="text-gray-500 text-sm mb-6">Generate a clean deployment package without company data.</p>
+                    
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">Select Modules to Include</label>
+                            <div id="extract-modules-list" class="space-y-2"></div>
+                        </div>
+                        <div class="flex gap-4">
+                            <label class="flex items-center gap-2">
+                                <input type="checkbox" id="extract-docs" checked class="rounded">
+                                <span class="text-sm">Include Documentation</span>
+                            </label>
+                            <label class="flex items-center gap-2">
+                                <input type="checkbox" id="extract-tests" class="rounded">
+                                <span class="text-sm">Include Tests</span>
+                            </label>
+                        </div>
+                        <button onclick="downloadCodeExtract()" class="btn-primary px-6 py-3 rounded-lg flex items-center gap-2">
+                            <i class="fas fa-download"></i> Download ZIP Package
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="page-sa-roles" class="page-section">
+                <div class="flex items-center justify-between mb-6">
+                    <button onclick="openRoleModal()" class="btn-primary px-4 py-2 rounded-lg flex items-center gap-2">
+                        <i class="fas fa-plus"></i> Add Role
+                    </button>
+                </div>
+                <div class="card overflow-hidden">
+                    <table class="w-full text-sm">
+                        <thead class="bg-gray-50 text-gray-600">
+                            <tr>
+                                <th class="px-4 py-3 text-left font-medium">Name</th>
+                                <th class="px-4 py-3 text-left font-medium">Page Permissions</th>
+                                <th class="px-4 py-3 text-left font-medium">Action Permissions</th>
+                                <th class="px-4 py-3 text-left font-medium">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="roles-table" class="divide-y divide-gray-100"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div id="page-sa-audit" class="page-section">
+                <div class="card p-6">
+                    <h3 class="text-lg font-semibold mb-4">Audit Logs</h3>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm">
+                            <thead class="bg-gray-50 text-gray-600">
+                                <tr>
+                                    <th class="px-4 py-3 text-left font-medium">Time</th>
+                                    <th class="px-4 py-3 text-left font-medium">User</th>
+                                    <th class="px-4 py-3 text-left font-medium">Action</th>
+                                    <th class="px-4 py-3 text-left font-medium">Entity</th>
+                                    <th class="px-4 py-3 text-left font-medium">Details</th>
+                                </tr>
+                            </thead>
+                            <tbody id="audit-table" class="divide-y divide-gray-100"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- COMPANY USER PAGES -->
+            <div id="page-dashboard" class="page-section">
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                    <div class="card p-6">
+                        <div class="flex items-center justify-between mb-4">
+                            <div class="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center"><i class="fas fa-folder text-blue-600 text-xl"></i></div>
+                        </div>
+                        <h3 class="text-2xl font-bold text-gray-900" id="stat-folders">0</h3>
+                        <p class="text-sm text-gray-500">Folders</p>
+                    </div>
+                    <div class="card p-6">
+                        <div class="flex items-center justify-between mb-4">
+                            <div class="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center"><i class="fas fa-file text-green-600 text-xl"></i></div>
+                        </div>
+                        <h3 class="text-2xl font-bold text-gray-900" id="stat-files">0</h3>
+                        <p class="text-sm text-gray-500">Files</p>
+                    </div>
+                    <div class="card p-6">
+                        <div class="flex items-center justify-between mb-4">
+                            <div class="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center"><i class="fas fa-cogs text-purple-600 text-xl"></i></div>
+                        </div>
+                        <h3 class="text-2xl font-bold text-gray-900" id="stat-modules">0</h3>
+                        <p class="text-sm text-gray-500">Modules</p>
+                    </div>
+                    <div class="card p-6">
+                        <div class="flex items-center justify-between mb-4">
+                            <div class="w-12 h-12 bg-yellow-100 rounded-lg flex items-center justify-center"><i class="fas fa-users text-yellow-600 text-xl"></i></div>
+                        </div>
+                        <h3 class="text-2xl font-bold text-gray-900" id="stat-users">0</h3>
+                        <p class="text-sm text-gray-500">Team Members</p>
+                    </div>
+                </div>
+            </div>
+
+            <div id="page-upload" class="page-section h-full" style="margin: -24px; height: calc(100vh - 64px);">
+                <iframe id="iframe-upload" class="w-full h-full border-0" allowfullscreen></iframe>
+            </div>
+
+            <div id="page-rules" class="page-section h-full" style="margin: -24px; height: calc(100vh - 64px);">
+                <iframe id="iframe-rules" class="w-full h-full border-0" allowfullscreen></iframe>
+            </div>
+
+            <div id="page-processing" class="page-section h-full" style="margin: -24px; height: calc(100vh - 64px);">
+                <iframe id="iframe-processing" class="w-full h-full border-0" allowfullscreen></iframe>
+            </div>
+
+            <div id="page-primary" class="page-section h-full" style="margin: -24px; height: calc(100vh - 64px);">
+                <iframe id="iframe-primary" class="w-full h-full border-0" allowfullscreen></iframe>
+            </div>
+
+            <div id="page-users" class="page-section">
+                <div class="flex items-center justify-between mb-6">
+                    <button onclick="openUserModal()" class="btn-primary px-4 py-2 rounded-lg flex items-center gap-2">
+                        <i class="fas fa-plus"></i> Add User
+                    </button>
+                </div>
+                <div class="card overflow-hidden">
+                    <table class="w-full text-sm">
+                        <thead class="bg-gray-50 text-gray-600">
+                            <tr>
+                                <th class="px-4 py-3 text-left font-medium">Name</th>
+                                <th class="px-4 py-3 text-left font-medium">Email</th>
+                                <th class="px-4 py-3 text-left font-medium">Role</th>
+                                <th class="px-4 py-3 text-left font-medium">Modules</th>
+                                <th class="px-4 py-3 text-left font-medium">Status</th>
+                                <th class="px-4 py-3 text-left font-medium">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="users-table" class="divide-y divide-gray-100"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div id="page-recycle-bin" class="page-section">
+                <div class="flex items-center justify-between mb-6">
+                    <div class="flex gap-2">
+                        <button onclick="restoreSelectedBinItems()" class="btn-primary px-4 py-2 rounded-lg flex items-center gap-2">
+                            <i class="fas fa-trash-restore"></i> Restore Selected
+                        </button>
+                        <button onclick="deleteSelectedBinItems()" class="btn-danger px-4 py-2 rounded-lg flex items-center gap-2">
+                            <i class="fas fa-trash"></i> Delete Selected
+                        </button>
+                    </div>
+                    <p class="text-sm text-gray-500">Items are kept for 30 days before auto-cleanup</p>
+                </div>
+                <div class="card overflow-hidden">
+                    <table class="w-full text-sm">
+                        <thead class="bg-gray-50 text-gray-600">
+                            <tr>
+                                <th class="px-4 py-3"><input type="checkbox" id="select-all-bin" onchange="toggleAllBinItems()"></th>
+                                <th class="px-4 py-3 text-left font-medium">Name</th>
+                                <th class="px-4 py-3 text-left font-medium">Type</th>
+                                <th class="px-4 py-3 text-left font-medium">Deleted By</th>
+                                <th class="px-4 py-3 text-left font-medium">Deleted At</th>
+                                <th class="px-4 py-3 text-left font-medium">Expires</th>
+                            </tr>
+                        </thead>
+                        <tbody id="recycle-table" class="divide-y divide-gray-100"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div id="page-profile" class="page-section">
+                <div class="max-w-xl">
+                    <div class="card p-6 mb-6">
+                        <h3 class="text-lg font-semibold mb-4">My Profile</h3>
+                        <form id="profile-form" onsubmit="updateProfile(event)" class="space-y-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                                <input type="text" id="profile-name" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                                <input type="email" id="profile-email" disabled class="w-full px-3 py-2 rounded-lg border border-gray-300 bg-gray-50">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Role</label>
+                                <input type="text" id="profile-role" disabled class="w-full px-3 py-2 rounded-lg border border-gray-300 bg-gray-50">
+                            </div>
+                            <button type="submit" class="btn-primary px-4 py-2 rounded-lg">Update Profile</button>
+                        </form>
+                    </div>
+                    
+                    <div class="card p-6">
+                        <h3 class="text-lg font-semibold mb-4">Change Password</h3>
+                        <form id="password-form" onsubmit="changePassword(event)" class="space-y-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Current Password</label>
+                                <input type="password" id="password-current" required class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">New Password</label>
+                                <input type="password" id="password-new" required oninput="checkPasswordStrength(this.value)" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none">
+                                <div class="mt-2"><div class="password-strength bg-gray-200" id="change-strength-bar"></div><p class="text-xs mt-1" id="change-strength-text">Enter password</p></div>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Confirm New Password</label>
+                                <input type="password" id="password-confirm" required class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none">
+                            </div>
+                            <button type="submit" class="btn-primary px-4 py-2 rounded-lg">Change Password</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+</div>
+
+<!-- ==================== MODALS ==================== -->
+<!-- Company Modal -->
+<div id="company-modal" class="fixed inset-0 z-50 hidden">
+    <div class="modal-overlay absolute inset-0" onclick="closeCompanyModal()"></div>
+    <div class="absolute inset-0 flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <div class="p-6 border-b border-gray-200 flex items-center justify-between">
+                <h3 class="text-lg font-semibold" id="company-modal-title">Add Company</h3>
+                <button onclick="closeCompanyModal()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times"></i></button>
+            </div>
+            <form id="company-form" onsubmit="saveCompany(event)" class="p-6 space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Company Name *</label>
+                    <input type="text" id="company-name" required class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Company Code *</label>
+                    <input type="text" id="company-code" required class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none uppercase" placeholder="e.g., ACME001">
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                        <input type="email" id="company-email" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+                        <input type="text" id="company-phone" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Address</label>
+                    <textarea id="company-address" rows="2" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none"></textarea>
+                </div>
+                <div id="admin-user-section" class="border-t border-gray-200 pt-4">
+                    <h4 class="font-medium text-gray-900 mb-2">Admin User</h4>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Admin Name *</label>
+                            <input type="text" id="admin-name" required class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Admin Email *</label>
+                            <input type="email" id="admin-email" required class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none">
+                        </div>
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Assign Modules *</label>
+                    <div id="company-modules-select" class="space-y-2 max-h-40 overflow-y-auto border border-gray-200 rounded-lg p-3"></div>
+                </div>
+                <div class="flex justify-end gap-3 pt-4">
+                    <button type="button" onclick="closeCompanyModal()" class="px-4 py-2 rounded-lg border border-gray-300 hover:bg-gray-50">Cancel</button>
+                    <button type="submit" id="company-submit-btn" class="btn-primary px-4 py-2 rounded-lg">Create Company</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- View Company Modal -->
+<div id="view-company-modal" class="fixed inset-0 z-50 hidden">
+    <div class="modal-overlay absolute inset-0" onclick="closeViewCompanyModal()"></div>
+    <div class="absolute inset-0 flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            <div class="p-6 border-b border-gray-200 flex items-center justify-between">
+                <h3 class="text-lg font-semibold" id="view-company-modal-title">Company Profile</h3>
+                <button onclick="closeViewCompanyModal()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="p-6 space-y-6">
+                <!-- Company General Info -->
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <p class="text-xs font-semibold text-gray-400 uppercase">Company Name</p>
+                        <p id="vc-name" class="text-sm font-medium text-gray-900 mt-0.5">-</p>
+                    </div>
+                    <div>
+                        <p class="text-xs font-semibold text-gray-400 uppercase">Company Code</p>
+                        <p id="vc-code" class="text-sm font-mono text-gray-900 mt-0.5">-</p>
+                    </div>
+                    <div>
+                        <p class="text-xs font-semibold text-gray-400 uppercase">Email Address</p>
+                        <p id="vc-email" class="text-sm text-gray-900 mt-0.5">-</p>
+                    </div>
+                    <div>
+                        <p class="text-xs font-semibold text-gray-400 uppercase">Phone Number</p>
+                        <p id="vc-phone" class="text-sm text-gray-900 mt-0.5">-</p>
+                    </div>
+                    <div class="col-span-2">
+                        <p class="text-xs font-semibold text-gray-400 uppercase">Address</p>
+                        <p id="vc-address" class="text-sm text-gray-900 mt-0.5">-</p>
+                    </div>
+                    <div>
+                        <p class="text-xs font-semibold text-gray-400 uppercase">Status</p>
+                        <span id="vc-status" class="badge mt-1">-</span>
+                    </div>
+                    <div>
+                        <p class="text-xs font-semibold text-gray-400 uppercase">Created On</p>
+                        <p id="vc-created" class="text-sm text-gray-900 mt-0.5">-</p>
+                    </div>
+                </div>
+                
+                <!-- Modules Section -->
+                <div>
+                    <h4 class="font-semibold text-gray-900 border-b border-gray-100 pb-2 mb-3">Assigned Modules</h4>
+                    <div id="vc-modules" class="flex flex-wrap gap-2"></div>
+                </div>
+                
+                <!-- Users Section -->
+                <div>
+                    <h4 class="font-semibold text-gray-900 border-b border-gray-100 pb-2 mb-3">Company Users</h4>
+                    <div class="overflow-x-auto border border-gray-200 rounded-lg">
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th class="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase">Name</th>
+                                    <th class="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase">Email</th>
+                                    <th class="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase">Role</th>
+                                    <th class="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="vc-users-table" class="divide-y divide-gray-200 bg-white"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            <div class="p-6 border-t border-gray-200 flex justify-end">
+                <button onclick="closeViewCompanyModal()" class="btn-primary px-4 py-2 rounded-lg">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- User Modal -->
+<div id="user-modal" class="fixed inset-0 z-50 hidden">
+    <div class="modal-overlay absolute inset-0" onclick="closeUserModal()"></div>
+    <div class="absolute inset-0 flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-md">
+            <div class="p-6 border-b border-gray-200 flex items-center justify-between">
+                <h3 class="text-lg font-semibold" id="user-modal-title">Add User</h3>
+                <button onclick="closeUserModal()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times"></i></button>
+            </div>
+            <form id="user-form" onsubmit="saveUser(event)" class="p-6 space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Full Name *</label>
+                    <input type="text" id="user-name-input" required class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Email *</label>
+                    <input type="email" id="user-email-input" required class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Role *</label>
+                    <select id="user-role-input" required class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none">
+                        <option value="">Loading roles...</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Modules *</label>
+                    <div id="user-modules-select" class="space-y-2 max-h-40 overflow-y-auto border border-gray-200 rounded-lg p-3"></div>
+                    <p class="text-xs text-gray-500 mt-1">Select modules this user can access</p>
+                </div>
+                <div class="flex justify-end gap-3 pt-4">
+                    <button type="button" onclick="closeUserModal()" class="px-4 py-2 rounded-lg border border-gray-300 hover:bg-gray-50">Cancel</button>
+                    <button type="submit" class="btn-primary px-4 py-2 rounded-lg">Add User</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Module Modal -->
+<div id="module-modal" class="fixed inset-0 z-50 hidden">
+    <div class="modal-overlay absolute inset-0" onclick="closeModuleModal()"></div>
+    <div class="absolute inset-0 flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-md">
+            <div class="p-6 border-b border-gray-200 flex items-center justify-between">
+                <h3 class="text-lg font-semibold">Add Module</h3>
+                <button onclick="closeModuleModal()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times"></i></button>
+            </div>
+            <form id="module-form" onsubmit="saveModule(event)" class="p-6 space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Module Name *</label>
+                    <input type="text" id="module-name-input" required class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Module Code *</label>
+                    <input type="text" id="module-code-input" required class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none uppercase" placeholder="e.g., PRIMARY_DATA">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                    <textarea id="module-desc-input" rows="2" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none"></textarea>
+                </div>
+                <div class="flex justify-end gap-3 pt-4">
+                    <button type="button" onclick="closeModuleModal()" class="px-4 py-2 rounded-lg border border-gray-300 hover:bg-gray-50">Cancel</button>
+                    <button type="submit" class="btn-primary px-4 py-2 rounded-lg">Add Module</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Role Modal -->
+<div id="role-modal" class="fixed inset-0 z-50 hidden">
+    <div class="modal-overlay absolute inset-0" onclick="closeRoleModal()"></div>
+    <div class="absolute inset-0 flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <div class="p-6 border-b border-gray-200 flex items-center justify-between">
+                <h3 class="text-lg font-semibold" id="role-modal-title">Add Role</h3>
+                <button onclick="closeRoleModal()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times"></i></button>
+            </div>
+            <form id="role-form" onsubmit="saveRole(event)" class="p-6 space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Role Name *</label>
+                    <input type="text" id="role-name-input" required class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="e.g., Senior Accountant">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Page Permissions</label>
+                    <div class="space-y-2 border border-gray-200 rounded-lg p-3">
+                        <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" name="page_perm" value="dashboard" checked class="rounded text-blue-600"><span class="text-sm text-gray-700">Company Insight</span></label>
+                        <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" name="page_perm" value="primary_data" checked class="rounded text-blue-600"><span class="text-sm text-gray-700">Dashboard</span></label>
+                        <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" name="page_perm" value="upload_files" class="rounded text-blue-600"><span class="text-sm text-gray-700">Upload & Files</span></label>
+                        <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" name="page_perm" value="rule_mapping" class="rounded text-blue-600"><span class="text-sm text-gray-700">Rule Mapping</span></label>
+                        <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" name="page_perm" value="final_processing" class="rounded text-blue-600"><span class="text-sm text-gray-700">Final Processing</span></label>
+                        <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" name="page_perm" value="user_management" class="rounded text-blue-600"><span class="text-sm text-gray-700">User Management</span></label>
+                        <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" name="page_perm" value="recycle_bin" class="rounded text-blue-600"><span class="text-sm text-gray-700">Recycle Bin</span></label>
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Action Permissions</label>
+                    <div class="space-y-2 border border-gray-200 rounded-lg p-3">
+                        <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" name="action_perm" value="upload_files" class="rounded text-blue-600"><span class="text-sm text-gray-700">Upload Files</span></label>
+                        <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" name="action_perm" value="delete_files" class="rounded text-blue-600"><span class="text-sm text-gray-700">Delete Files</span></label>
+                        <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" name="action_perm" value="edit_rules" class="rounded text-blue-600"><span class="text-sm text-gray-700">Edit Rules</span></label>
+                        <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" name="action_perm" value="run_processing" class="rounded text-blue-600"><span class="text-sm text-gray-700">Run Processing</span></label>
+                        <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" name="action_perm" value="manage_users" class="rounded text-blue-600"><span class="text-sm text-gray-700">Manage Users</span></label>
+                        <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" name="action_perm" value="reset_passwords" class="rounded text-blue-600"><span class="text-sm text-gray-700">Reset Passwords</span></label>
+                        <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" name="action_perm" value="export_data" class="rounded text-blue-600"><span class="text-sm text-gray-700">Export Data</span></label>
+                    </div>
+                </div>
+                <div class="flex justify-end gap-3 pt-4">
+                    <button type="button" onclick="closeRoleModal()" class="px-4 py-2 rounded-lg border border-gray-300 hover:bg-gray-50">Cancel</button>
+                    <button type="submit" id="role-submit-btn" class="btn-primary px-4 py-2 rounded-lg">Save Role</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Temp Password Modal -->
+<div id="temp-password-modal" class="fixed inset-0 z-50 hidden">
+    <div class="modal-overlay absolute inset-0" onclick="closeTempPasswordModal()"></div>
+    <div class="absolute inset-0 flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-md">
+            <div class="p-6 text-center">
+                <div class="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <i class="fas fa-check text-green-600 text-2xl"></i>
+                </div>
+                <h3 class="text-lg font-semibold mb-2">User Created Successfully</h3>
+                <p class="text-sm text-gray-500 mb-4">Share this temporary password with the user. They'll be forced to change it on first login.</p>
+                
+                <div class="bg-gray-100 rounded-lg p-4 mb-4">
+                    <p class="text-xs text-gray-500 mb-1">Temporary Password</p>
+                    <div class="flex items-center gap-2">
+                        <input type="text" id="temp-password-display" readonly class="flex-1 bg-white px-3 py-2 rounded border border-gray-300 font-mono text-lg text-center">
+                        <button onclick="copyTempPassword()" class="p-2 rounded-lg hover:bg-gray-200 text-gray-600" title="Copy">
+                            <i class="fas fa-copy"></i>
+                        </button>
+                    </div>
+                </div>
+                
+                <button onclick="closeTempPasswordModal()" class="btn-primary px-6 py-2 rounded-lg">Done</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// ==================== GLOBAL STATE ====================
+let currentUser = null;
+let authToken = localStorage.getItem('token');
+let currentPage = 'dashboard';
+let companyModules = [];
+let selectedBinItems = new Set();
+
+// ==================== API HELPERS ====================
+const API_BASE = '';
+
+async function api(url, options = {}) {
+    const opts = {
+        headers: {
+            'Authorization': authToken ? `Bearer ${authToken}` : '',
+            ...options.headers
+        },
+        ...options
+    };
+    
+    if (options.body && !(options.body instanceof FormData)) {
+        opts.headers['Content-Type'] = 'application/json';
+    }
+    
+    try {
+        const res = await fetch(API_BASE + url, opts);
+        const data = await res.json().catch(() => ({ success: false, message: 'Invalid response' }));
+        
+        if (res.status === 401) {
+            if (url.includes('/api/auth/login')) {
+                throw new Error(data.detail || data.message || 'User ID or password has been entered incorrectly. Please enter the correct details.');
+            }
+            localStorage.removeItem('token');
+            authToken = null;
+            syncTokenToLocalStorage();
+            showLoginScreen();
+            throw new Error('Session expired. Please login again.');
+        }
+        
+        if (!res.ok && !data.success) {
+            throw new Error(data.detail || data.message || `HTTP ${res.status}`);
+        }
+        
+        return data;
+    } catch (err) {
+        if (err.message.includes('Failed to fetch')) {
+            throw new Error('Cannot connect to server. Please ensure the backend is running.');
+        }
+        throw err;
+    }
+}
+
+function getAuthHeaders() {
+    return authToken ? { 'Authorization': `Bearer ${authToken}` } : {};
+}
+
+// ==================== TOASTS ====================
+function showToast(message, type = 'info') {
+    const container = document.getElementById('toast-container');
+    const toast = document.createElement('div');
+    const colors = {
+        success: 'bg-green-500',
+        error: 'bg-red-500',
+        warning: 'bg-yellow-500',
+        info: 'bg-blue-500'
+    };
+    const icons = {
+        success: 'fa-check-circle',
+        error: 'fa-exclamation-circle',
+        warning: 'fa-exclamation-triangle',
+        info: 'fa-info-circle'
+    };
+    
+    toast.className = `toast ${colors[type]} text-white px-4 py-3 rounded-lg shadow-lg flex items-center gap-3 min-w-[300px] cursor-pointer`;
+    toast.innerHTML = `<i class="fas ${icons[type]}"></i><span class="font-medium">${message}</span>`;
+    toast.onclick = () => toast.remove();
+    
+    container.appendChild(toast);
+    setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateX(100%)';
+        setTimeout(() => toast.remove(), 300);
+    }, 4000);
+}
+
+// ==================== PASSWORD UTILITIES ====================
+function togglePassword(inputId) {
+    const input = document.getElementById(inputId);
+    input.type = input.type === 'password' ? 'text' : 'password';
+}
+
+function checkPasswordStrength(password) {
+    const bar = document.getElementById('password-strength-bar') || document.getElementById('change-strength-bar');
+    const text = document.getElementById('password-strength-text') || document.getElementById('change-strength-text');
+    if (!bar || !text) return;
+    
+    let score = 0;
+    if (password.length >= 8) score++;
+    if (/[A-Z]/.test(password)) score++;
+    if (/[a-z]/.test(password)) score++;
+    if (/\d/.test(password)) score++;
+    if (/[!@#$%^&*()_+\-=\[\]{};:"|,.<>\/?]/.test(password)) score++;
+    
+    const colors = ['bg-gray-200', 'bg-red-500', 'bg-orange-500', 'bg-yellow-500', 'bg-blue-500', 'bg-green-500'];
+    const widths = ['0%', '20%', '40%', '60%', '80%', '100%'];
+    const labels = ['Enter password', 'Very weak', 'Weak', 'Fair', 'Good', 'Strong'];
+    
+    bar.className = `password-strength ${colors[score]}`;
+    bar.style.width = widths[score];
+    text.textContent = labels[score];
+    text.className = `text-xs mt-1 ${score >= 4 ? 'text-green-600' : score >= 2 ? 'text-yellow-600' : 'text-red-600'}`;
+    
+    return score >= 5;
+}
+
+// ==================== SCREEN MANAGEMENT ====================
+function showLoginScreen() {
+    document.getElementById('login-screen').classList.remove('hidden');
+    document.getElementById('force-change-screen').classList.add('hidden');
+    document.getElementById('app-shell').classList.add('hidden');
+}
+
+function showForceChangeScreen() {
+    document.getElementById('login-screen').classList.add('hidden');
+    document.getElementById('force-change-screen').classList.remove('hidden');
+    document.getElementById('app-shell').classList.add('hidden');
+}
+
+function showAppShell() {
+    document.getElementById('login-screen').classList.add('hidden');
+    document.getElementById('force-change-screen').classList.add('hidden');
+    document.getElementById('app-shell').classList.remove('hidden');
+}
+
+// ==================== LOGIN ====================
+async function handleLogin(e) {
+    e.preventDefault();
+    const btn = document.getElementById('login-btn');
+    const spinner = document.getElementById('login-spinner');
+    
+    btn.disabled = true;
+    spinner.classList.remove('hidden');
+    
+    try {
+        const formData = new FormData();
+        formData.append('email', document.getElementById('login-email').value.trim());
+        formData.append('password', document.getElementById('login-password').value);
+        
+        const companyCode = document.getElementById('login-company-code').value.trim();
+        if (companyCode) formData.append('company_code', companyCode);
+        
+        const data = await api('/api/auth/login', { method: 'POST', body: formData });
+        
+        if (data.success) {
+            authToken = data.token;
+            localStorage.setItem('token', authToken);
+            syncTokenToLocalStorage();
+            currentUser = data.user;
+            
+            // Store modules from login response
+            if (data.modules && data.modules.length > 0) {
+                companyModules = data.modules;
+            }
+            
+            if (data.requires_password_change) {
+                showForceChangeScreen();
+            } else {
+                initApp();
+            }
+        }
+    } catch (err) {
+        showToast(err.message, 'error');
+    } finally {
+        btn.disabled = false;
+        spinner.classList.add('hidden');
+    }
+}
+
+async function handleForceChange(e) {
+    e.preventDefault();
+    const newPass = document.getElementById('force-new-password').value;
+    const confirmPass = document.getElementById('force-confirm-password').value;
+    
+    if (newPass !== confirmPass) {
+        showToast('Passwords do not match', 'error');
+        return;
+    }
+    
+    if (!checkPasswordStrength(newPass)) {
+        showToast('Password does not meet strength requirements', 'error');
+        return;
+    }
+    
+    const btn = document.getElementById('force-change-btn');
+    const spinner = document.getElementById('force-spinner');
+    btn.disabled = true;
+    spinner.classList.remove('hidden');
+    
+    try {
+        const formData = new FormData();
+        formData.append('new_password', newPass);
+        formData.append('token', authToken);
+        
+        const data = await api('/api/auth/force-change-password', { method: 'POST', body: formData });
+        
+        showToast(data.message, 'success');
+        showLoginScreen();
+    } catch (err) {
+        showToast(err.message, 'error');
+    } finally {
+        btn.disabled = false;
+        spinner.classList.add('hidden');
+    }
+}
+
+function handleLogout() {
+    localStorage.removeItem('token');
+    authToken = null;
+    syncTokenToLocalStorage();
+    currentUser = null;
+    showLoginScreen();
+    showToast('Logged out successfully', 'info');
+}
+
+// ==================== APP INITIALIZATION ====================
+async function initApp() {
+    try {
+        const data = await api('/api/auth/verify');
+        if (!data.authenticated) {
+            throw new Error('Not authenticated');
+        }
+        
+        currentUser = data.user;
+        
+        if (currentUser.role === 'super_admin') {
+            // Check if impersonating (has company context)
+            if (currentUser.company_id) {
+                // Restore impersonation view
+                currentUser.impersonating = true;
+                document.getElementById('impersonating-company-name').textContent = currentUser.company_name || 'Company';
+                document.getElementById('impersonation-banner').classList.remove('hidden');
+                document.getElementById('company-switcher-container').style.display = 'none';
+                
+                // Load company modules first, then init impersonated view
+                await loadCompanyModules();
+                initImpersonatedCompanyUser(
+                    { id: currentUser.company_id, name: currentUser.company_name || 'Company' },
+                    companyModules.find(m => m.id === currentUser.module_id)
+                );
+            } else {
+                initSuperAdmin();
+            }
+        } else {
+            initCompanyUser();
+        }
+        
+        showAppShell();
+    } catch (err) {
+        showToast(err.message, 'error');
+        showLoginScreen();
+    }
+}
+
+// ==================== SUPER ADMIN ====================
+function initSuperAdmin() {
+    document.getElementById('app-title').textContent = 'Super Admin';
+    document.getElementById('app-subtitle').textContent = 'System Management';
+    document.getElementById('company-badge').style.display = 'none';
+    const modBadge = document.getElementById('module-badge');
+    if (modBadge) modBadge.style.display = 'none';
+    document.getElementById('user-name').textContent = currentUser.name || 'Super Admin';
+    document.getElementById('user-role').textContent = 'Super Administrator';
+    
+    // Show company switcher for Super Admin
+    document.getElementById('company-switcher-container').style.display = 'inline-block';
+    
+    // Hide impersonation banner
+    document.getElementById('impersonation-banner').classList.add('hidden');
+    
+    // Hide module switcher in super admin mode (unless impersonating)
+    document.getElementById('module-switcher-container').style.display = 'none';
+    
+    const nav = document.getElementById('sidebar-nav');
+    nav.innerHTML = `
+        <a href="#" onclick="navigateTo('sa-dashboard')" class="sidebar-link active flex items-center gap-3 px-3 py-2.5 text-sm font-medium" data-page="sa-dashboard">
+            <i class="fas fa-tachometer-alt w-5"></i><span class="sidebar-text">Company Insight</span>
+        </a>
+        <a href="#" onclick="navigateTo('sa-companies')" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium" data-page="sa-companies">
+            <i class="fas fa-building w-5"></i><span class="sidebar-text">Companies</span>
+        </a>
+        <a href="#" onclick="navigateTo('sa-modules')" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium" data-page="sa-modules">
+            <i class="fas fa-cubes w-5"></i><span class="sidebar-text">Modules</span>
+        </a>
+        <a href="#" onclick="navigateTo('sa-roles')" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium" data-page="sa-roles">
+            <i class="fas fa-user-shield w-5"></i><span class="sidebar-text">Role Management</span>
+        </a>
+        <a href="#" onclick="navigateTo('sa-settings')" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium" data-page="sa-settings">
+            <i class="fas fa-globe w-5"></i><span class="sidebar-text">Website Settings</span>
+        </a>
+        <a href="#" onclick="navigateTo('sa-code-extract')" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium" data-page="sa-code-extract">
+            <i class="fas fa-code w-5"></i><span class="sidebar-text">Code Extraction</span>
+        </a>
+        <a href="#" onclick="navigateTo('sa-audit')" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium" data-page="sa-audit">
+            <i class="fas fa-clipboard-list w-5"></i><span class="sidebar-text">Audit Logs</span>
+        </a>
+    `;
+    
+    // Load company switcher
+    loadCompanySwitcher();
+    
+    navigateTo('sa-dashboard');
+}
+
+// ==================== COMPANY SWITCHER / IMPERSONATION ====================
+
+function toggleCompanyDropdown() {
+    const dropdown = document.getElementById('company-switcher-dropdown');
+    dropdown.classList.toggle('hidden');
+}
+
+// Close company dropdown when clicking outside
+document.addEventListener('click', (e) => {
+    const container = document.getElementById('company-switcher-container');
+    if (container && !container.contains(e.target)) {
+        const dropdown = document.getElementById('company-switcher-dropdown');
+        if (dropdown) dropdown.classList.add('hidden');
+    }
+});
+
+let allCompanies = [];
+
+async function loadCompanySwitcher() {
+    try {
+        const data = await api('/api/super-admin/companies?status=active');
+        allCompanies = data.companies || [];
+        
+        const list = document.getElementById('company-switcher-list');
+        document.getElementById('current-company-name').textContent = 'View as Company';
+        
+        list.innerHTML = allCompanies.map(c => `
+            <button onclick="impersonateCompany(${c.id}, '${c.name.replace(/'/g, "\\'")}')" 
+                class="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2 text-gray-700">
+                <i class="fas fa-building text-xs text-gray-400"></i>
+                <div class="flex-1">
+                    <div class="font-medium">${c.name}</div>
+                    <div class="text-xs text-gray-400">${c.code} · ${c.user_count || 0} users · ${c.module_count || 0} modules</div>
+                </div>
+                <i class="fas fa-eye text-xs text-blue-400"></i>
+            </button>
+        `).join('') || '<div class="px-3 py-4 text-sm text-gray-500 text-center">No active companies</div>';
+    } catch (err) {
+        console.error('Failed to load companies for switcher:', err);
+    }
+}
+
+async function impersonateCompany(companyId, companyName) {
+    try {
+        const formData = new FormData();
+        formData.append('company_id', companyId);
+        
+        const data = await api('/api/auth/switch-context', { method: 'POST', body: formData });
+        
+        if (data.success) {
+            // Update token
+            authToken = data.token;
+            localStorage.setItem('token', authToken);
+            syncTokenToLocalStorage();
+            currentUser = {
+                ...currentUser,
+                company_id: data.company.id,
+                company_name: data.company.name,
+                module_id: data.module ? data.module.id : null,
+                impersonating: true
+            };
+            
+            // Update UI
+            document.getElementById('company-switcher-dropdown').classList.add('hidden');
+            document.getElementById('company-switcher-container').style.display = 'none';
+            
+            // Show impersonation banner
+            document.getElementById('impersonating-company-name').textContent = data.company.name;
+            document.getElementById('impersonation-banner').classList.remove('hidden');
+            
+            // Switch to company user sidebar with admin access
+            initImpersonatedCompanyUser(data.company, data.module);
+            
+            showToast(`Now viewing as ${data.company.name}`, 'success');
+        }
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+function initImpersonatedCompanyUser(company, module) {
+    document.getElementById('app-title').textContent = company.name;
+    document.getElementById('app-subtitle').textContent = 'Reconciliation Portal';
+    document.getElementById('company-badge').style.display = 'inline-flex';
+    document.getElementById('company-badge').textContent = company.name;
+    
+    document.getElementById('user-name').textContent = currentUser.name || 'Super Admin';
+    document.getElementById('user-role').textContent = 'Super Admin (Viewing)';
+    
+    // Show module switcher for impersonated company
+    document.getElementById('module-switcher-container').style.display = 'inline-block';
+    loadCompanyModules();
+    
+    // Build company user sidebar - Super Admin gets all pages when impersonating
+    const nav = document.getElementById('sidebar-nav');
+    nav.innerHTML = `
+        <a href="#" onclick="navigateTo('dashboard')" class="sidebar-link active flex items-center gap-3 px-3 py-2.5 text-sm font-medium" data-page="dashboard">
+            <i class="fas fa-tachometer-alt w-5"></i><span class="sidebar-text">Company Insight</span>
+        </a>
+        <a href="#" onclick="navigateTo('primary')" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium" data-page="primary">
+            <i class="fas fa-database w-5"></i><span class="sidebar-text">Dashboard</span>
+        </a>
+        <a href="#" onclick="navigateTo('upload')" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium" data-page="upload">
+            <i class="fas fa-cloud-upload-alt w-5"></i><span class="sidebar-text">Upload & Files</span>
+        </a>
+        <a href="#" onclick="navigateTo('rules')" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium" data-page="rules">
+            <i class="fas fa-project-diagram w-5"></i><span class="sidebar-text">Rule Mapping</span>
+        </a>
+        <a href="#" onclick="navigateTo('processing')" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium" data-page="processing">
+            <i class="fas fa-play-circle w-5"></i><span class="sidebar-text">Final Processing</span>
+        </a>
+        <a href="#" onclick="navigateTo('users')" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium" data-page="users">
+            <i class="fas fa-users-cog w-5"></i><span class="sidebar-text">User Management</span>
+        </a>
+        <a href="#" onclick="navigateTo('recycle-bin')" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium" data-page="recycle-bin">
+            <i class="fas fa-trash-alt w-5"></i><span class="sidebar-text">Recycle Bin</span>
+        </a>
+    `;
+    
+    navigateTo('dashboard');
+}
+
+async function restoreSuperAdmin() {
+    try {
+        const data = await api('/api/auth/restore-context', { method: 'POST' });
+        
+        if (data.success) {
+            // Update token
+            authToken = data.token;
+            localStorage.setItem('token', authToken);
+            syncTokenToLocalStorage();
+            currentUser = {
+                ...currentUser,
+                company_id: null,
+                company_name: null,
+                module_id: null,
+                impersonating: false
+            };
+            
+            // Hide impersonation banner
+            document.getElementById('impersonation-banner').classList.add('hidden');
+            
+            // Re-init super admin view
+            initSuperAdmin();
+            
+            showToast('Returned to Super Admin view', 'success');
+        }
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+async function loadSuperAdminDashboard() {
+    try {
+        const data = await api('/api/super-admin/dashboard');
+        document.getElementById('sa-stat-companies').textContent = data.stats.total_companies;
+        document.getElementById('sa-stat-users').textContent = data.stats.total_users;
+        document.getElementById('sa-stat-modules').textContent = data.stats.total_modules;
+        document.getElementById('sa-stat-activity').textContent = data.recent_activity.length;
+        
+        const tbody = document.getElementById('sa-activity-table');
+        tbody.innerHTML = data.recent_activity.map(log => `
+            <tr class="hover:bg-gray-50">
+                <td class="px-4 py-3"><span class="badge badge-blue">${log.action}</span></td>
+                <td class="px-4 py-3 text-gray-600">${log.entity_type}</td>
+                <td class="px-4 py-3 text-gray-600">${log.details || '-'}</td>
+                <td class="px-4 py-3 text-gray-500 text-xs">${new Date(log.created_at).toLocaleString()}</td>
+            </tr>
+        `).join('') || '<tr><td colspan="4" class="px-4 py-8 text-center text-gray-500">No recent activity</td></tr>';
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+async function loadCompanies() {
+    try {
+        const status = document.getElementById('company-filter').value;
+        const url = status ? `/api/super-admin/companies?status=${status}` : '/api/super-admin/companies';
+        const data = await api(url);
+        
+        const tbody = document.getElementById('companies-table');
+        tbody.innerHTML = data.companies.map(c => `
+            <tr class="hover:bg-gray-50">
+                <td class="px-4 py-3"><div class="font-medium text-gray-900">${c.name}</div><div class="text-xs text-gray-500">${c.email || '-'}</div></td>
+                <td class="px-4 py-3 font-mono text-sm text-gray-600">${c.code}</td>
+                <td class="px-4 py-3 text-gray-600">${c.user_count || 0}</td>
+                <td class="px-4 py-3 text-gray-600">${c.module_count || 0}</td>
+                <td class="px-4 py-3"><span class="badge ${c.status === 'active' ? 'badge-green' : 'badge-red'}">${c.status}</span></td>
+                <td class="px-4 py-3 text-gray-500 text-xs">${new Date(c.created_at).toLocaleDateString()}</td>
+                <td class="px-4 py-3">
+                    <div class="flex gap-2">
+                        <button onclick="viewCompany(${c.id})" class="text-blue-600 hover:text-blue-800" title="View Details"><i class="fas fa-eye"></i></button>
+                        <button onclick="resetCompanyPassword(${c.id})" class="text-purple-600 hover:text-purple-800" title="Reset Admin Password"><i class="fas fa-key"></i></button>
+                        <button onclick="editCompany(${c.id})" class="text-yellow-600 hover:text-yellow-800" title="Edit Company"><i class="fas fa-edit"></i></button>
+                        <button onclick="deleteCompany(${c.id})" class="text-red-600 hover:text-red-800" title="Delete Company"><i class="fas fa-trash"></i></button>
+                    </div>
+                </td>
+            </tr>
+        `).join('') || '<tr><td colspan="7" class="px-4 py-8 text-center text-gray-500">No companies found</td></tr>';
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+async function loadModules() {
+    try {
+        const data = await api('/api/super-admin/modules');
+        const grid = document.getElementById('modules-grid');
+        grid.innerHTML = data.modules.map(m => `
+            <div class="card p-5">
+                <div class="flex items-start justify-between mb-3">
+                    <div class="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center"><i class="fas fa-cube text-blue-600"></i></div>
+                    <span class="badge badge-blue text-xs">${m.code}</span>
+                </div>
+                <h4 class="font-semibold text-gray-900">${m.name}</h4>
+                <p class="text-sm text-gray-500 mt-1">${m.description || 'No description'}</p>
+                <p class="text-xs text-gray-400 mt-3">Created ${new Date(m.created_at).toLocaleDateString()}</p>
+            </div>
+        `).join('') || '<div class="col-span-3 text-center py-8 text-gray-500">No modules found</div>';
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+let editingCompanyId = null;
+
+function openCompanyModal() {
+    editingCompanyId = null;
+    document.getElementById('company-modal-title').textContent = 'Add Company';
+    document.getElementById('company-submit-btn').textContent = 'Create Company';
+    document.getElementById('company-form').reset();
+    document.getElementById('admin-user-section').classList.remove('hidden');
+    document.getElementById('admin-name').required = true;
+    document.getElementById('admin-email').required = true;
+    document.getElementById('company-code').disabled = false;
+    document.getElementById('company-modal').classList.remove('hidden');
+    loadModuleCheckboxes();
+}
+
+function closeCompanyModal() {
+    document.getElementById('company-modal').classList.add('hidden');
+    document.getElementById('company-form').reset();
+}
+
+async function loadModuleCheckboxes() {
+    try {
+        const data = await api('/api/super-admin/modules');
+        const container = document.getElementById('company-modules-select');
+        container.innerHTML = data.modules.map(m => `
+            <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" name="module" value="${m.id}" class="rounded text-blue-600">
+                <span class="text-sm text-gray-700">${m.name} <span class="text-gray-400">(${m.code})</span></span>
+            </label>
+        `).join('');
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+async function editCompany(id) {
+    try {
+        editingCompanyId = id;
+        const data = await api(`/api/super-admin/companies/${id}`);
+        const c = data.company;
+        
+        document.getElementById('company-modal-title').textContent = 'Edit Company';
+        document.getElementById('company-submit-btn').textContent = 'Update Company';
+        
+        document.getElementById('company-name').value = c.name;
+        document.getElementById('company-code').value = c.code;
+        document.getElementById('company-code').disabled = true; // Code cannot be changed
+        document.getElementById('company-email').value = c.email || '';
+        document.getElementById('company-phone').value = c.phone || '';
+        document.getElementById('company-address').value = c.address || '';
+        
+        // Hide Admin User section when editing
+        document.getElementById('admin-user-section').classList.add('hidden');
+        document.getElementById('admin-name').required = false;
+        document.getElementById('admin-email').required = false;
+        
+        // Load module checkboxes and pre-check assigned ones
+        await loadModuleCheckboxes();
+        const assignedModuleIds = data.modules.map(m => m.id);
+        const checkboxes = document.querySelectorAll('input[name="module"]');
+        checkboxes.forEach(cb => {
+            cb.checked = assignedModuleIds.includes(parseInt(cb.value));
+        });
+        
+        // Store currently assigned modules on the element to compare during save
+        document.getElementById('company-modules-select').dataset.initialModules = JSON.stringify(assignedModuleIds);
+        
+        document.getElementById('company-modal').classList.remove('hidden');
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+async function viewCompany(id) {
+    try {
+        const data = await api(`/api/super-admin/companies/${id}`);
+        const c = data.company;
+        
+        document.getElementById('vc-name').textContent = c.name;
+        document.getElementById('vc-code').textContent = c.code;
+        document.getElementById('vc-email').textContent = c.email || 'N/A';
+        document.getElementById('vc-phone').textContent = c.phone || 'N/A';
+        document.getElementById('vc-address').textContent = c.address || 'N/A';
+        
+        const statusSpan = document.getElementById('vc-status');
+        statusSpan.textContent = c.status;
+        statusSpan.className = `badge ${c.status === 'active' ? 'badge-green' : 'badge-red'}`;
+        
+        document.getElementById('vc-created').textContent = new Date(c.created_at).toLocaleString();
+        
+        // Modules
+        const modContainer = document.getElementById('vc-modules');
+        modContainer.innerHTML = data.modules.map(m => `
+            <span class="badge badge-blue flex items-center gap-1">
+                <i class="fas fa-cube text-xs"></i> ${m.name} (${m.code})
+            </span>
+        `).join('') || '<span class="text-sm text-gray-500">No modules assigned</span>';
+        
+        // Users
+        const usersTbody = document.getElementById('vc-users-table');
+        usersTbody.innerHTML = data.users.map(u => `
+            <tr class="hover:bg-gray-50 text-sm">
+                <td class="px-4 py-2 text-gray-900 font-medium">${u.name}</td>
+                <td class="px-4 py-2 text-gray-600">${u.email}</td>
+                <td class="px-4 py-2 text-gray-600 font-medium">${u.role.toUpperCase()}</td>
+                <td class="px-4 py-2"><span class="badge ${u.status === 'active' ? 'badge-green' : 'badge-red'}">${u.status}</span></td>
+            </tr>
+        `).join('') || '<tr><td colspan="4" class="px-4 py-4 text-center text-gray-500">No users found</td></tr>';
+        
+        document.getElementById('view-company-modal').classList.remove('hidden');
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+function closeViewCompanyModal() {
+    document.getElementById('view-company-modal').classList.add('hidden');
+}
+
+async function saveCompany(e) {
+    e.preventDefault();
+    const checked = document.querySelectorAll('input[name="module"]:checked');
+    const checkedModuleIds = Array.from(checked).map(c => parseInt(c.value));
+    
+    if (checkedModuleIds.length === 0) {
+        showToast('Please select at least one module', 'error');
+        return;
+    }
+    
+    try {
+        const formData = new FormData();
+        formData.append('name', document.getElementById('company-name').value);
+        formData.append('email', document.getElementById('company-email').value);
+        formData.append('phone', document.getElementById('company-phone').value);
+        formData.append('address', document.getElementById('company-address').value);
+        
+        if (editingCompanyId) {
+            // Update company general info
+            const data = await api(`/api/super-admin/companies/${editingCompanyId}`, { method: 'PUT', body: formData });
+            
+            // Sync Modules (Assign new, unassign removed)
+            const initialModulesStr = document.getElementById('company-modules-select').dataset.initialModules || '[]';
+            const initialModuleIds = JSON.parse(initialModulesStr);
+            
+            const toAssign = checkedModuleIds.filter(id => !initialModuleIds.includes(id));
+            const toUnassign = initialModuleIds.filter(id => !checkedModuleIds.includes(id));
+            
+            for (const mid of toAssign) {
+                await api(`/api/super-admin/companies/${editingCompanyId}/modules/${mid}`, { method: 'POST' });
+            }
+            for (const mid of toUnassign) {
+                await api(`/api/super-admin/companies/${editingCompanyId}/modules/${mid}`, { method: 'DELETE' });
+            }
+            
+            showToast('Company updated successfully', 'success');
+            closeCompanyModal();
+            loadCompanies();
+        } else {
+            formData.append('code', document.getElementById('company-code').value);
+            formData.append('admin_name', document.getElementById('admin-name').value);
+            formData.append('admin_email', document.getElementById('admin-email').value);
+            formData.append('module_ids', checkedModuleIds.join(','));
+            
+            const data = await api('/api/super-admin/companies', { method: 'POST', body: formData });
+            
+            if (data.admin && data.admin.temp_password) {
+                document.getElementById('temp-password-display').value = data.admin.temp_password;
+                document.getElementById('temp-password-modal').classList.remove('hidden');
+            }
+            
+            showToast(data.message, 'success');
+            closeCompanyModal();
+            loadCompanies();
+        }
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+function copyTempPassword() {
+    const input = document.getElementById('temp-password-display');
+    input.select();
+    document.execCommand('copy');
+    showToast('Password copied to clipboard', 'success');
+}
+
+function closeTempPasswordModal() {
+    document.getElementById('temp-password-modal').classList.add('hidden');
+}
+
+async function deleteCompany(id) {
+    if (!confirm('Are you sure? This will soft-delete the company and all its users.')) return;
+    
+    try {
+        const data = await api(`/api/super-admin/companies/${id}`, { method: 'DELETE' });
+        showToast(data.message, 'success');
+        loadCompanies();
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+async function resetCompanyPassword(id) {
+    if (!confirm('Are you sure you want to reset the admin password for this company? This will generate a new secure password.')) return;
+    
+    try {
+        const data = await api(`/api/super-admin/companies/${id}/reset-admin-password`, { method: 'POST' });
+        if (data.success && data.temp_password) {
+            document.getElementById('temp-password-display').value = data.temp_password;
+            document.getElementById('temp-password-modal').classList.remove('hidden');
+            showToast(data.message || 'Password reset successfully', 'success');
+        } else {
+            showToast(data.message || 'Failed to reset password', 'error');
+        }
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+function openModuleModal() {
+    document.getElementById('module-modal').classList.remove('hidden');
+}
+
+function closeModuleModal() {
+    document.getElementById('module-modal').classList.add('hidden');
+    document.getElementById('module-form').reset();
+}
+
+async function saveModule(e) {
+    e.preventDefault();
+    try {
+        const formData = new FormData();
+        formData.append('name', document.getElementById('module-name-input').value);
+        formData.append('code', document.getElementById('module-code-input').value);
+        formData.append('description', document.getElementById('module-desc-input').value);
+        
+        const data = await api('/api/super-admin/modules', { method: 'POST', body: formData });
+        showToast(data.message, 'success');
+        closeModuleModal();
+        loadModules();
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+async function loadSettings() {
+    try {
+        const data = await api('/api/super-admin/settings');
+        data.settings.forEach(s => {
+            const el = document.getElementById(`setting-${s.setting_key.replace(/_/g, '-')}`);
+            if (el) el.value = s.setting_value;
+        });
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+async function saveSettings(e) {
+    e.preventDefault();
+    try {
+        const settings = {
+            site_name: document.getElementById('setting-site-name').value,
+            login_page_title: document.getElementById('setting-login-title').value,
+            footer_text: document.getElementById('setting-footer').value,
+            theme_color: document.getElementById('setting-theme-color').value
+        };
+        
+        const formData = new FormData();
+        formData.append('settings', JSON.stringify(settings));
+        
+        const data = await api('/api/super-admin/settings', { method: 'POST', body: formData });
+        showToast(data.message, 'success');
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+async function loadAuditLogs() {
+    try {
+        const data = await api('/api/super-admin/audit-logs');
+        const tbody = document.getElementById('audit-table');
+        tbody.innerHTML = data.logs.map(log => `
+            <tr class="hover:bg-gray-50">
+                <td class="px-4 py-3 text-gray-500 text-xs">${new Date(log.created_at).toLocaleString()}</td>
+                <td class="px-4 py-3 text-gray-600">${log.user_id || 'System'}</td>
+                <td class="px-4 py-3"><span class="badge badge-blue">${log.action}</span></td>
+                <td class="px-4 py-3 text-gray-600">${log.entity_type}</td>
+                <td class="px-4 py-3 text-gray-600 text-sm">${log.details || '-'}</td>
+            </tr>
+        `).join('') || '<tr><td colspan="5" class="px-4 py-8 text-center text-gray-500">No audit logs found</td></tr>';
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+async function loadCodeExtract() {
+    try {
+        const data = await api('/api/super-admin/code-extract');
+        const list = document.getElementById('extract-modules-list');
+        
+        // Fetch modules
+        const modData = await api('/api/super-admin/modules');
+        list.innerHTML = modData.modules.map(m => `
+            <label class="flex items-center gap-2 cursor-pointer p-2 rounded-lg hover:bg-gray-50">
+                <input type="checkbox" name="extract-module" value="${m.code}" checked class="rounded text-blue-600">
+                <span class="text-sm text-gray-700">${m.name}</span>
+            </label>
+        `).join('');
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+async function downloadCodeExtract() {
+    try {
+        const checked = document.querySelectorAll('input[name="extract-module"]:checked');
+        const modules = Array.from(checked).map(c => c.value).join(',');
+        
+        const formData = new FormData();
+        formData.append('modules', modules);
+        formData.append('include_docs', document.getElementById('extract-docs').checked);
+        formData.append('include_tests', document.getElementById('extract-tests').checked);
+        
+        const res = await fetch(API_BASE + '/api/super-admin/code-extract/download', {
+            method: 'POST',
+            body: formData,
+            headers: getAuthHeaders()
+        });
+        
+        if (!res.ok) throw new Error('Download failed');
+        
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `ReconciliationTool_${new Date().toISOString().slice(0,10)}.zip`;
+        a.click();
+        window.URL.revokeObjectURL(url);
+        
+        showToast('Code package downloaded successfully', 'success');
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+// ==================== MODULE SWITCHER ====================
+// companyModules is already declared at global scope (line ~747)
+
+function toggleModuleDropdown() {
+    const dropdown = document.getElementById('module-switcher-dropdown');
+    dropdown.classList.toggle('hidden');
+}
+
+// Close dropdown when clicking outside
+document.addEventListener('click', (e) => {
+    const container = document.getElementById('module-switcher-container');
+    if (container && !container.contains(e.target)) {
+        const dropdown = document.getElementById('module-switcher-dropdown');
+        if (dropdown) dropdown.classList.add('hidden');
+    }
+});
+
+async function loadCompanyModules() {
+    try {
+        const data = await api('/api/company/modules');
+        companyModules = data.modules || [];
+        const currentModuleId = data.current_module_id;
+        
+        const list = document.getElementById('module-switcher-list');
+        const currentModule = companyModules.find(m => m.id === currentModuleId);
+        
+        // Update current module name in button
+        document.getElementById('current-module-name').textContent = currentModule ? currentModule.name : 'Select Module';
+        
+        // Build dropdown list
+        list.innerHTML = companyModules.map(m => `
+            <button onclick="switchModule(${m.id}, '${m.name.replace(/'/g, "\\'")}')" 
+                class="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2 ${m.id === currentModuleId ? 'bg-green-50 text-green-700 font-medium' : 'text-gray-700'}">
+                <i class="fas fa-cube text-xs ${m.id === currentModuleId ? 'text-green-600' : 'text-gray-400'}"></i>
+                ${m.name}
+                ${m.id === currentModuleId ? '<span class="ml-auto text-xs text-green-600">Active</span>' : ''}
+            </button>
+        `).join('');
+        
+        // Show module switcher if multiple modules
+        const switcherContainer = document.getElementById('module-switcher-container');
+        if (companyModules.length > 0) {
+            switcherContainer.style.display = 'inline-block';
+        }
+    } catch (err) {
+        console.error('Failed to load modules:', err);
+    }
+}
+
+async function switchModule(moduleId, moduleName) {
+    try {
+        const formData = new FormData();
+        formData.append('module_id', moduleId);
+        
+        const data = await api('/api/auth/set-module', { method: 'POST', body: formData });
+        
+        if (data.success) {
+            // Update token
+            authToken = data.token;
+            localStorage.setItem('token', authToken);
+            syncTokenToLocalStorage();
+            currentUser.module_id = moduleId;
+            
+            // Update UI
+            document.getElementById('current-module-name').textContent = moduleName;
+            document.getElementById('module-switcher-dropdown').classList.add('hidden');
+            
+            // Reload module list to update active indicator
+            loadCompanyModules();
+            
+            // Refresh current iframe page if on an iframe page
+            const iframePages = ['upload', 'rules', 'processing', 'primary'];
+            if (iframePages.includes(currentPage)) {
+                const iframe = document.getElementById(`iframe-${currentPage}`);
+                if (iframe) {
+                    const ts = new Date().getTime();
+                    const targetSrc = currentPage === 'primary' ? `index.html?v=${ts}#dashboard` : 
+                                      currentPage === 'processing' ? `index.html?v=${ts}#process` : 
+                                      `index.html?v=${ts}#${currentPage}`;
+                    iframe.src = 'about:blank';
+                    setTimeout(() => {
+                        iframe.src = targetSrc;
+                    }, 50);
+                }
+            }
+            
+            // Refresh dashboard stats
+            if (currentPage === 'dashboard') {
+                loadCompanyDashboard();
+            }
+            
+            showToast(`Switched to ${moduleName}`, 'success');
+        }
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+// ==================== COMPANY USER ====================
+function initCompanyUser() {
+    document.getElementById('app-title').textContent = currentUser.company_name || 'Company';
+    document.getElementById('app-subtitle').textContent = 'Reconciliation Portal';
+    document.getElementById('company-badge').style.display = 'inline-flex';
+    document.getElementById('company-badge').textContent = currentUser.company_name || 'Company';
+    
+    // Hide old module badge if it exists, use switcher instead
+    const modBadge2 = document.getElementById('module-badge');
+    if (modBadge2) modBadge2.style.display = 'none';
+    
+    document.getElementById('user-name').textContent = currentUser.name || currentUser.email;
+    document.getElementById('user-role').textContent = currentUser.role.charAt(0).toUpperCase() + currentUser.role.slice(1);
+    
+    // Load module switcher
+    loadCompanyModules();
+    
+    const role = currentUser.role;
+    const nav = document.getElementById('sidebar-nav');
+    let navHTML = `
+        <a href="#" onclick="navigateTo('dashboard')" class="sidebar-link active flex items-center gap-3 px-3 py-2.5 text-sm font-medium" data-page="dashboard">
+            <i class="fas fa-tachometer-alt w-5"></i><span class="sidebar-text">Company Insight</span>
+        </a>
+    `;
+    
+    // Dashboard - all roles
+    navHTML += `
+        <a href="#" onclick="navigateTo('primary')" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium" data-page="primary">
+            <i class="fas fa-database w-5"></i><span class="sidebar-text">Dashboard</span>
+        </a>
+    `;
+    
+    if (role === 'editor' || role === 'admin') {
+        navHTML += `
+            <a href="#" onclick="navigateTo('upload')" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium" data-page="upload">
+                <i class="fas fa-cloud-upload-alt w-5"></i><span class="sidebar-text">Upload & Files</span>
+            </a>
+            <a href="#" onclick="navigateTo('rules')" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium" data-page="rules">
+                <i class="fas fa-project-diagram w-5"></i><span class="sidebar-text">Rule Mapping</span>
+            </a>
+            <a href="#" onclick="navigateTo('processing')" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium" data-page="processing">
+                <i class="fas fa-play-circle w-5"></i><span class="sidebar-text">Final Processing</span>
+            </a>
+        `;
+    }
+    
+    if (role === 'admin') {
+        navHTML += `
+            <a href="#" onclick="navigateTo('users')" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium" data-page="users">
+                <i class="fas fa-users-cog w-5"></i><span class="sidebar-text">User Management</span>
+            </a>
+            <a href="#" onclick="navigateTo('recycle-bin')" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium" data-page="recycle-bin">
+                <i class="fas fa-trash-alt w-5"></i><span class="sidebar-text">Recycle Bin</span>
+            </a>
+        `;
+    }
+    
+    nav.innerHTML = navHTML;
+    navigateTo('dashboard');
+}
+
+async function loadCompanyDashboard() {
+    try {
+        const data = await api('/api/company/dashboard');
+        document.getElementById('stat-folders').textContent = data.stats.folders;
+        document.getElementById('stat-files').textContent = data.stats.files;
+        document.getElementById('stat-modules').textContent = data.stats.modules;
+        document.getElementById('stat-users').textContent = data.stats.users;
+        
+        // Update module badge with first module name if element exists
+        if (data.modules && data.modules.length > 0) {
+            const modBadge3 = document.getElementById('module-badge');
+            if (modBadge3) modBadge3.textContent = data.modules[0].name;
+        }
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+async function loadCompanyUsers() {
+    try {
+        const data = await api('/api/company/users');
+        const tbody = document.getElementById('users-table');
+        tbody.innerHTML = data.users.map(u => {
+            const modulesList = (u.assigned_modules || []).map(m => m.name).join(', ') || 'None';
+            const roleDisplay = u.role_name || u.role || 'Unknown';
+            return `
+            <tr class="hover:bg-gray-50">
+                <td class="px-4 py-3 font-medium text-gray-900">${u.name || '-'}</td>
+                <td class="px-4 py-3 text-gray-600">${u.email}</td>
+                <td class="px-4 py-3"><span class="badge badge-blue">${roleDisplay}</span></td>
+                <td class="px-4 py-3 text-gray-500 text-xs" title="${modulesList}">${modulesList.length > 30 ? modulesList.substring(0, 30) + '...' : modulesList}</td>
+                <td class="px-4 py-3"><span class="badge ${u.status === 'active' ? 'badge-green' : 'badge-gray'}">${u.status}</span></td>
+                <td class="px-4 py-3">
+                    <div class="flex gap-2">
+                        <button onclick="openEditUserModal(${u.id})" class="text-blue-600 hover:text-blue-800 tooltip" data-tip="Edit"><i class="fas fa-pencil-alt"></i></button>
+                        <button onclick="resetUserPassword(${u.id})" class="text-yellow-600 hover:text-yellow-800 tooltip" data-tip="Reset Password"><i class="fas fa-key"></i></button>
+                        <button onclick="deleteUser(${u.id})" class="text-red-600 hover:text-red-800 tooltip" data-tip="Delete"><i class="fas fa-trash"></i></button>
+                    </div>
+                </td>
+            </tr>
+        `;
+        }).join('') || '<tr><td colspan="6" class="px-4 py-8 text-center text-gray-500">No users found</td></tr>';
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+let editingUserId = null;
+
+async function openUserModal() {
+    editingUserId = null;
+    document.getElementById('user-modal-title').textContent = 'Add User';
+    document.querySelector('#user-form button[type="submit"]').textContent = 'Add User';
+    document.getElementById('user-email-input').disabled = false;
+    document.getElementById('user-modal').classList.remove('hidden');
+    
+    // Load global roles
+    try {
+        const roleData = await api('/api/company/roles');
+        const roleSelect = document.getElementById('user-role-input');
+        roleSelect.innerHTML = roleData.roles.map(r => `
+            <option value="${r.id}">${r.name}</option>
+        `).join('');
+    } catch (err) {
+        console.error('Failed to load roles:', err);
+    }
+    
+    // Load company modules for checkboxes
+    try {
+        const modData = await api('/api/company/modules');
+        const modContainer = document.getElementById('user-modules-select');
+        modContainer.innerHTML = modData.modules.map(m => `
+            <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" name="user_module" value="${m.id}" class="rounded text-blue-600">
+                <span class="text-sm text-gray-700">${m.name}</span>
+            </label>
+        `).join('');
+    } catch (err) {
+        console.error('Failed to load modules:', err);
+    }
+}
+
+async function openEditUserModal(userId) {
+    editingUserId = userId;
+    document.getElementById('user-modal-title').textContent = 'Edit User';
+    document.querySelector('#user-form button[type="submit"]').textContent = 'Update User';
+    document.getElementById('user-email-input').disabled = true;
+    document.getElementById('user-modal').classList.remove('hidden');
+    
+    try {
+        // Load user data
+        const data = await api('/api/company/users');
+        const user = data.users.find(u => u.id === userId);
+        if (!user) {
+            showToast('User not found', 'error');
+            closeUserModal();
+            return;
+        }
+        
+        // Pre-fill form
+        document.getElementById('user-name-input').value = user.name || '';
+        document.getElementById('user-email-input').value = user.email || '';
+        
+        // Load roles and select current
+        const roleData = await api('/api/company/roles');
+        const roleSelect = document.getElementById('user-role-input');
+        roleSelect.innerHTML = roleData.roles.map(r => `
+            <option value="${r.id}" ${r.id === user.role_id ? 'selected' : ''}>${r.name}</option>
+        `).join('');
+        
+        // Load modules and check assigned ones
+        const modData = await api('/api/company/modules');
+        const assignedModIds = (user.assigned_modules || []).map(m => m.id);
+        const modContainer = document.getElementById('user-modules-select');
+        modContainer.innerHTML = modData.modules.map(m => `
+            <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" name="user_module" value="${m.id}" ${assignedModIds.includes(m.id) ? 'checked' : ''} class="rounded text-blue-600">
+                <span class="text-sm text-gray-700">${m.name}</span>
+            </label>
+        `).join('');
+    } catch (err) {
+        showToast(err.message, 'error');
+        closeUserModal();
+    }
+}
+
+function closeUserModal() {
+    document.getElementById('user-modal').classList.add('hidden');
+    document.getElementById('user-form').reset();
+    editingUserId = null;
+}
+
+async function saveUser(e) {
+    e.preventDefault();
+    try {
+        const roleId = document.getElementById('user-role-input').value;
+        const checkedModules = document.querySelectorAll('input[name="user_module"]:checked');
+        const moduleIds = Array.from(checkedModules).map(c => c.value).join(',');
+        
+        if (!roleId) {
+            showToast('Please select a role', 'error');
+            return;
+        }
+        if (!moduleIds) {
+            showToast('Please select at least one module', 'error');
+            return;
+        }
+        
+        const formData = new FormData();
+        formData.append('name', document.getElementById('user-name-input').value);
+        formData.append('role_id', roleId);
+        formData.append('module_ids', moduleIds);
+        
+        let data;
+        if (editingUserId) {
+            // Update existing user
+            data = await api(`/api/company/users/${editingUserId}`, { method: 'PUT', body: formData });
+        } else {
+            // Create new user
+            formData.append('email', document.getElementById('user-email-input').value);
+            data = await api('/api/company/users', { method: 'POST', body: formData });
+            
+            if (data.user && data.user.temp_password) {
+                document.getElementById('temp-password-display').value = data.user.temp_password;
+                document.getElementById('temp-password-modal').classList.remove('hidden');
+            }
+        }
+        
+        showToast(data.message, 'success');
+        closeUserModal();
+        loadCompanyUsers();
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+async function resetUserPassword(userId) {
+    if (!confirm('Reset password for this user? A new temporary password will be generated.')) return;
+    
+    try {
+        const data = await api(`/api/company/users/${userId}/reset-password`, { method: 'POST' });
+        document.getElementById('temp-password-display').value = data.new_password;
+        document.getElementById('temp-password-modal').classList.remove('hidden');
+        showToast('Password reset successfully', 'success');
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+async function deleteUser(userId) {
+    if (!confirm('Are you sure you want to delete this user?')) return;
+    
+    try {
+        const data = await api(`/api/company/users/${userId}`, { method: 'DELETE' });
+        showToast(data.message, 'success');
+        loadCompanyUsers();
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+async function loadRecycleBin() {
+    try {
+        const data = await api('/api/company/recycle-bin');
+        const tbody = document.getElementById('recycle-table');
+        selectedBinItems.clear();
+        document.getElementById('select-all-bin').checked = false;
+        
+        tbody.innerHTML = data.items.map(item => {
+            const expires = new Date(item.deleted_at);
+            expires.setDate(expires.getDate() + 30);
+            const daysLeft = Math.ceil((expires - new Date()) / (1000 * 60 * 60 * 24));
+            
+            return `
+                <tr class="hover:bg-gray-50">
+                    <td class="px-4 py-3"><input type="checkbox" value="${item.id}" onchange="toggleBinItem(${item.id})" ${selectedBinItems.has(item.id) ? 'checked' : ''}></td>
+                    <td class="px-4 py-3 font-medium text-gray-900">${item.entity_name || '-'}</td>
+                    <td class="px-4 py-3"><span class="badge badge-gray">${item.entity_type}</span></td>
+                    <td class="px-4 py-3 text-gray-600">${item.deleted_by_name || 'System'}</td>
+                    <td class="px-4 py-3 text-gray-500 text-xs">${new Date(item.deleted_at).toLocaleDateString()}</td>
+                    <td class="px-4 py-3"><span class="badge ${daysLeft < 7 ? 'badge-red' : 'badge-yellow'}">${daysLeft} days left</span></td>
+                </tr>
+            `;
+        }).join('') || '<tr><td colspan="6" class="px-4 py-8 text-center text-gray-500">Recycle bin is empty</td></tr>';
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+function toggleBinItem(id) {
+    if (selectedBinItems.has(id)) {
+        selectedBinItems.delete(id);
+    } else {
+        selectedBinItems.add(id);
+    }
+}
+
+function toggleAllBinItems() {
+    const checked = document.getElementById('select-all-bin').checked;
+    const boxes = document.querySelectorAll('#recycle-table input[type="checkbox"]');
+    boxes.forEach(b => {
+        b.checked = checked;
+        const id = parseInt(b.value);
+        if (checked) selectedBinItems.add(id);
+        else selectedBinItems.delete(id);
+    });
+}
+
+async function deleteSelectedBinItems() {
+    if (selectedBinItems.size === 0) {
+        showToast('Select items to delete', 'warning');
+        return;
+    }
+    
+    if (!confirm(`Permanently delete ${selectedBinItems.size} items? This cannot be undone.`)) return;
+    
+    try {
+        const formData = new FormData();
+        formData.append('bin_ids', Array.from(selectedBinItems).join(','));
+        
+        const data = await api('/api/company/recycle-bin/permanent-delete', { method: 'POST', body: formData });
+        showToast(data.message, 'success');
+        selectedBinItems.clear();
+        loadRecycleBin();
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+async function restoreSelectedBinItems() {
+    if (selectedBinItems.size === 0) {
+        showToast('Select items to restore', 'warning');
+        return;
+    }
+    
+    if (!confirm(`Restore ${selectedBinItems.size} items to their original locations?`)) return;
+    
+    try {
+        const formData = new FormData();
+        formData.append('bin_ids', Array.from(selectedBinItems).join(','));
+        
+        const data = await api('/api/company/recycle-bin/restore', { method: 'POST', body: formData });
+        showToast(data.message, 'success');
+        selectedBinItems.clear();
+        loadRecycleBin();
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+// ==================== PROFILE ====================
+async function loadProfile() {
+    try {
+        const data = await api('/api/auth/profile');
+        const p = data.profile;
+        document.getElementById('profile-name').value = p.name || '';
+        document.getElementById('profile-email').value = p.email;
+        document.getElementById('profile-role').value = p.role;
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+async function updateProfile(e) {
+    e.preventDefault();
+    try {
+        const formData = new FormData();
+        formData.append('name', document.getElementById('profile-name').value);
+        
+        const data = await api('/api/auth/profile/update', { method: 'POST', body: formData });
+        showToast(data.message, 'success');
+        document.getElementById('user-name').textContent = data.name;
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+async function changePassword(e) {
+    e.preventDefault();
+    const current = document.getElementById('password-current').value;
+    const newPass = document.getElementById('password-new').value;
+    const confirm = document.getElementById('password-confirm').value;
+    
+    if (newPass !== confirm) {
+        showToast('Passwords do not match', 'error');
+        return;
+    }
+    
+    try {
+        const formData = new FormData();
+        formData.append('current_password', current);
+        formData.append('new_password', newPass);
+        
+        const data = await api('/api/auth/change-password', { method: 'POST', body: formData });
+        showToast(data.message, 'success');
+        document.getElementById('password-form').reset();
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+// ==================== ROLES ====================
+// ==================== ROLES ====================
+let editingRoleId = null;
+let allRoles = [];
+
+function openRoleModal() {
+    editingRoleId = null;
+    document.getElementById('role-modal-title').textContent = 'Add Role';
+    document.getElementById('role-submit-btn').textContent = 'Save Role';
+    document.getElementById('role-form').reset();
+    document.getElementById('role-modal').classList.remove('hidden');
+}
+
+function closeRoleModal() {
+    document.getElementById('role-modal').classList.add('hidden');
+    document.getElementById('role-form').reset();
+}
+
+async function editRole(roleId) {
+    editingRoleId = roleId;
+    const role = allRoles.find(r => r.id === roleId);
+    if (!role) {
+        showToast('Role not found', 'error');
+        return;
+    }
+    
+    document.getElementById('role-modal-title').textContent = 'Edit Role';
+    document.getElementById('role-submit-btn').textContent = 'Update Role';
+    document.getElementById('role-name-input').value = role.name;
+    
+    // Check page permissions
+    const pageCheckboxes = document.querySelectorAll('input[name="page_perm"]');
+    pageCheckboxes.forEach(cb => {
+        cb.checked = role.page_permissions.includes(cb.value);
+    });
+    
+    // Check action permissions
+    const actionCheckboxes = document.querySelectorAll('input[name="action_perm"]');
+    actionCheckboxes.forEach(cb => {
+        cb.checked = role.action_permissions.includes(cb.value);
+    });
+    
+    document.getElementById('role-modal').classList.remove('hidden');
+}
+
+async function saveRole(e) {
+    e.preventDefault();
+    try {
+        const pagePerms = Array.from(document.querySelectorAll('input[name="page_perm"]:checked')).map(c => c.value);
+        const actionPerms = Array.from(document.querySelectorAll('input[name="action_perm"]:checked')).map(c => c.value);
+        
+        const formData = new FormData();
+        formData.append('name', document.getElementById('role-name-input').value);
+        formData.append('page_permissions', JSON.stringify(pagePerms));
+        formData.append('action_permissions', JSON.stringify(actionPerms));
+        
+        let data;
+        if (editingRoleId) {
+            data = await api(`/api/super-admin/roles/${editingRoleId}`, { method: 'PUT', body: formData });
+        } else {
+            data = await api('/api/super-admin/roles', { method: 'POST', body: formData });
+        }
+        
+        showToast(data.message || 'Role saved successfully', 'success');
+        closeRoleModal();
+        loadRoles();
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+async function loadRoles() {
+    try {
+        const data = await api('/api/super-admin/roles');
+        allRoles = data.roles || [];
+        const tbody = document.getElementById('roles-table');
+        tbody.innerHTML = allRoles.map(r => `
+            <tr class="hover:bg-gray-50">
+                <td class="px-4 py-3 font-medium text-gray-900">${r.name}</td>
+                <td class="px-4 py-3 text-gray-600 text-xs">${r.page_permissions.join(', ')}</td>
+                <td class="px-4 py-3 text-gray-600 text-xs">${r.action_permissions.join(', ')}</td>
+                <td class="px-4 py-3">
+                    <div class="flex gap-2">
+                        <button onclick="editRole(${r.id})" class="text-yellow-600 hover:text-yellow-800"><i class="fas fa-edit"></i></button>
+                        <button onclick="deleteRole(${r.id})" class="text-red-600 hover:text-red-800"><i class="fas fa-trash"></i></button>
+                    </div>
+                </td>
+            </tr>
+        `).join('') || '<tr><td colspan="4" class="px-4 py-8 text-center text-gray-500">No roles found</td></tr>';
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+async function deleteRole(roleId) {
+    if (!confirm('Are you sure you want to delete this role?')) return;
+    
+    try {
+        const data = await api(`/api/super-admin/roles/${roleId}`, { method: 'DELETE' });
+        showToast(data.message, 'success');
+        loadRoles();
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+// ==================== TOKEN SYNC FOR IFRAME ====================
+function syncTokenToLocalStorage() {
+    // The iframe (index.html) reads 'access_token' from localStorage
+    // SaaS stores token as 'token', so we sync it
+    if (authToken) {
+        localStorage.setItem('access_token', authToken);
+    } else {
+        localStorage.removeItem('access_token');
+    }
+}
+
+// ==================== NAVIGATION ====================
+function navigateTo(page) {
+    currentPage = page;
+    
+    // Update sidebar active state
+    document.querySelectorAll('.sidebar-link').forEach(el => {
+        el.classList.toggle('active', el.dataset.page === page);
+    });
+    
+    // Hide all pages
+    document.querySelectorAll('.page-section').forEach(el => el.classList.remove('active'));
+    
+    // Show target page
+    const target = document.getElementById(`page-${page}`);
+    if (target) target.classList.add('active');
+    
+    // Update page title
+    const titles = {
+        'sa-dashboard': 'Super Admin Dashboard',
+        'sa-companies': 'Company Management',
+        'sa-modules': 'Module Management',
+        'sa-settings': 'Website Settings',
+        'sa-code-extract': 'Code Extraction',
+        'sa-audit': 'Audit Logs',
+        'dashboard': 'Company Insight',
+        'upload': 'Upload & Files',
+        'rules': 'Rule Mapping',
+        'processing': 'Final Processing',
+        'primary': 'Dashboard',
+        'users': 'User Management',
+        'recycle-bin': 'Recycle Bin',
+        'profile': 'My Profile'
+    };
+    document.getElementById('page-title').textContent = titles[page] || page;
+    
+    // Handle iframe-based pages: sync token and refresh iframe content
+    const iframePages = ['upload', 'rules', 'processing', 'primary'];
+    if (iframePages.includes(page)) {
+        syncTokenToLocalStorage();
+        const iframe = document.getElementById(`iframe-${page}`);
+        if (iframe) {
+            const ts = new Date().getTime();
+            const targetSrc = page === 'primary' ? `index.html?v=${ts}#dashboard` : 
+                              page === 'processing' ? `index.html?v=${ts}#process` : 
+                              `index.html?v=${ts}#${page}`;
+            if (!iframe.src || iframe.src === 'about:blank' || iframe.src.indexOf('index.html') === -1) {
+                iframe.src = targetSrc;
+            } else {
+                iframe.src = 'about:blank';
+                setTimeout(() => {
+                    iframe.src = targetSrc;
+                }, 50);
+            }
+        }
+    }
+    
+    // Load page data
+    switch(page) {
+        case 'sa-dashboard': loadSuperAdminDashboard(); break;
+        case 'sa-companies': loadCompanies(); break;
+        case 'sa-modules': loadModules(); break;
+        case 'sa-roles': loadRoles(); break;
+        case 'sa-settings': loadSettings(); break;
+        case 'sa-code-extract': loadCodeExtract(); break;
+        case 'sa-audit': loadAuditLogs(); break;
+        case 'dashboard': loadCompanyDashboard(); break;
+        case 'users': loadCompanyUsers(); break;
+        case 'recycle-bin': loadRecycleBin(); break;
+        case 'profile': loadProfile(); break;
+    }
+}
+
+let sidebarCollapsed = false;
+
+function toggleSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    const overlay = document.getElementById('sidebar-overlay');
+    sidebar.classList.toggle('-translate-x-full');
+    overlay.classList.toggle('hidden');
+}
+
+function toggleSidebarCollapse() {
+    sidebarCollapsed = !sidebarCollapsed;
+    const sidebar = document.getElementById('sidebar');
+    const mainContent = document.getElementById('main-content-wrapper');
+    
+    if (sidebarCollapsed) {
+        sidebar.classList.add('sidebar-collapsed');
+        if (mainContent) {
+            mainContent.classList.remove('lg:ml-64');
+            mainContent.classList.add('main-content-expanded');
+        }
+    } else {
+        sidebar.classList.remove('sidebar-collapsed');
+        if (mainContent) {
+            mainContent.classList.remove('main-content-expanded');
+            mainContent.classList.add('lg:ml-64');
+        }
+    }
+}
+
+function toggleProfileMenu() {
+    navigateTo('profile');
+}
+
+// ==================== INIT ====================
+document.addEventListener('DOMContentLoaded', () => {
+    syncTokenToLocalStorage();
+    if (authToken) {
+        initApp();
+    } else {
+        showLoginScreen();
+    }
+    
+    // Close modals on Escape
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            document.querySelectorAll('[id$="-modal"]').forEach(m => m.classList.add('hidden'));
+        }
+    });
+});
+</script>
+
+</body>
+</html>

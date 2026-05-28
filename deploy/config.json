@@ -1,0 +1,29 @@
+{
+    "version": "2.0.0",
+    "app_name": "ReconciliationTool",
+    "exclude_files": [
+        "analyze_csv.py",
+        "cleanup_rules.py",
+        "cod2_inspect.py",
+        "fix_db.py",
+        "inspect_db.py",
+        "restart_server.py",
+        "server_test.log",
+        "response.json",
+        "temp_test.py",
+        "temp_test2.py",
+        "tmp_find_funcs.py",
+        "start_server.bat",
+        "start_background.vbs",
+        "install_service.bat",
+        "deploy.bat"
+    ],
+    "include_dirs": [
+        "backend",
+        "frontend",
+        "data"
+    ],
+    "include_files": [
+        "README.md"
+    ]
+}
