@@ -175,7 +175,7 @@ from database import (
     format_storage_error, is_valid_folder_name
 )
 
-from primary_data import generate_primary_data, list_primary_files, get_primary_file_path, read_primary_file
+from primary_data import generate_primary_data, preview_primary_data, list_primary_files, get_primary_file_path, read_primary_file, get_primary_field_columns
 from filename_parser import parse_filename, generate_processed_filename, get_storage_path
 from formula_engine import parse_formula, validate_formula, FormulaError
 
@@ -2767,24 +2767,85 @@ async def generate_primary(
     sheet_name: str = Form(...),
     column_name: str = Form(...),
     header_row: str = Form("1"),
-    sales_amount_column: str = Form(None)
+    sales_amount_column: str = Form(None),
+    fields: str = Form(None)
 ):
+    """Generate primary data file. Accepts optional 'fields' JSON array for multi-field extraction."""
     try:
         header_row_int = int(header_row) if header_row else 1
     except ValueError:
         raise HTTPException(status_code=422, detail="header_row must be a valid integer")
+    
+    # Parse fields JSON if provided
+    parsed_fields = None
+    if fields:
+        try:
+            parsed_fields = json.loads(fields)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=422, detail="fields must be valid JSON array")
+    
     try:
-        result = generate_primary_data(file_id, sheet_name, column_name, header_row_int, sales_amount_column)
+        result = generate_primary_data(
+            file_id, sheet_name, column_name, header_row_int,
+            sales_amount_column=sales_amount_column,
+            fields=parsed_fields
+        )
         return {
             "success": True,
             "message": f"Primary data generated successfully. {result['total_unique']} unique values found.",
             "primary_file": result['filename'],
             "total_unique": result['total_unique'],
             "preview": result['preview'],
+            "fields": result.get('fields', []),
+            "columns": result.get('columns', []),
+            "warnings": result.get('warnings', []),
             "download_url": f"/api/primary/download/{result['filename']}"
         }
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/primary/preview-live")
+async def preview_primary_live(
+    file_id: str = Form(...),
+    sheet_name: str = Form(...),
+    column_name: str = Form(...),
+    header_row: str = Form("1"),
+    fields: str = Form(None)
+):
+    """Live preview of primary data without saving to disk."""
+    try:
+        header_row_int = int(header_row) if header_row else 1
+    except ValueError:
+        raise HTTPException(status_code=422, detail="header_row must be a valid integer")
+    
+    parsed_fields = None
+    if fields:
+        try:
+            parsed_fields = json.loads(fields)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=422, detail="fields must be valid JSON array")
+    
+    try:
+        result = preview_primary_data(file_id, sheet_name, column_name, header_row_int, parsed_fields)
+        return {
+            "success": True,
+            "preview": result['preview'],
+            "total_unique": result['total_unique']
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/primary/field-columns")
+async def get_primary_field_columns_endpoint(current_user: Optional[dict] = Depends(get_optional_user)):
+    """Get Phase 1 field column definitions for Phase 2/4 integration."""
+    try:
+        cid, mid = _get_context(current_user)
+        field_columns = get_primary_field_columns(cid, mid)
+        return {"success": True, "fields": field_columns}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -2818,17 +2879,29 @@ async def preview_primary(filename: str, current_user: Optional[dict] = Depends(
         cid, mid = _get_context(current_user)
         file_path = get_primary_file_path(filename, cid, mid)
         if not os.path.exists(file_path):
-            raise HTTPException(status_code=404, detail="File not found")
+            logger.warning(f"Primary preview requested for '{filename}' but file not found at {file_path}. "
+                           f"Company: {cid}, Module: {mid}")
+            raise HTTPException(status_code=404, detail=f"Primary data file not found. Please re-save Phase 1 to regenerate the file. (Searched: {filename})")
         
         if filename.lower().endswith('.csv'):
             df = pd.read_csv(file_path, header=0)
         else:
+            # Try 'working' (lowercase - what generate_primary_data writes) first,
+            # then fall back to 'Working' (capital W) for backward compatibility,
+            # finally any first sheet
             try:
-                df = pd.read_excel(file_path, sheet_name='Working', header=0)
+                df = pd.read_excel(file_path, sheet_name='working', header=0)
             except Exception:
-                df = pd.read_excel(file_path, sheet_name=0, header=0)
+                try:
+                    df = pd.read_excel(file_path, sheet_name='Working', header=0)
+                except Exception:
+                    df = pd.read_excel(file_path, sheet_name=0, header=0)
         
-        preview_data = clean_nan_values(df.head(10).to_dict(orient='records'))
+        # Safely convert pandas types to python native types to prevent FastAPI serialization crashes
+        df_preview = df.head(10).fillna("")
+        preview_data_raw = df_preview.to_dict(orient='records')
+        import json
+        preview_data = json.loads(json.dumps(preview_data_raw, default=str))
         
         return {
             "success": True,
@@ -2836,11 +2909,10 @@ async def preview_primary(filename: str, current_user: Optional[dict] = Depends(
             "total_rows": len(df),
             "columns": df.columns.tolist()
         }
-    except HTTPException as he:
-        raise he
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Primary preview error for '{filename}': {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ============ RULE APIs ============
@@ -2960,6 +3032,7 @@ def process_rules_background():
             try: p1_config = json.loads(p1_config)
             except: pass
         if not isinstance(p1_config, dict): p1_config = {}
+        p1_fields = p1_config.get('fields', [])
         
         primary_generated_filename = p1_config.get('primary_file')
         # Default fallback if a Phase 2 rule doesn't specify its primary_column
@@ -3539,12 +3612,26 @@ def process_rules_background():
         
         summary_sheets = {}
         
+        # Track Phase 4 errors for reporting to user
+        phase4_errors = []
+        
+        logger.info(f"PHASE 4 DIAGNOSTIC: Found {len(phase4_rules)} Phase 4 rule(s) in database. "
+                    f"company_id={cid}, module_id={mid}")
+        
         if phase4_rules:
             for p4_rule in phase4_rules:
+                rule_name = dict(p4_rule).get('name', 'unknown')
                 try:
                     summary_config = json.loads(p4_rule['config'])
                     
+                    logger.info(f"PHASE 4 DIAGNOSTIC: Processing rule '{rule_name}', "
+                                f"include_in_final={summary_config.get('include_in_final', 'not set')}, "
+                                f"row_fields={summary_config.get('row_fields', [])}, "
+                                f"value_fields={[v.get('column','?') for v in summary_config.get('value_fields', [])]}")
+                    
                     if summary_config.get('include_in_final') is False:
+                        logger.warning(f"PHASE 4 DIAGNOSTIC: Rule '{rule_name}' SKIPPED — include_in_final is False")
+                        phase4_errors.append(f"Phase 4 summary '{rule_name}' skipped: include_in_final is set to False")
                         continue
                     
                     row_fields = summary_config.get('row_fields', [])
@@ -3553,6 +3640,85 @@ def process_rules_background():
                     filter_fields = summary_config.get('filter_fields', [])
                     
                     if not value_fields:
+                        logger.info(f"Phase 4 summary '{rule_name}' skipped: No value fields configured")
+                        continue
+                    
+                    # --- COLUMN NAME MAPPING: Map generic names to actual primary_df columns ---
+                    # Phase 1 can rename the primary key column (e.g., 'Order ID' → 'Sale Order Number')
+                    # and field columns (e.g., 'Sales Amount' → 'Total Amount')
+                    primary_key_col = p1_config.get('column', 'Order ID')
+                    
+                    # Build lookup: generic name → actual column name in primary_df
+                    col_alias_map = {}
+                    if primary_key_col != 'Order ID' and primary_key_col in primary_df.columns:
+                        col_alias_map['Order ID'] = primary_key_col
+                        col_alias_map['Primary_Value'] = primary_key_col
+                    elif primary_key_col == 'Order ID':
+                        col_alias_map['Primary_Value'] = 'Order ID'
+
+                    
+                    # Build alias map from Phase 1 fields: source_column → display name
+                    # This ensures references to original source column names resolve to the renamed output columns
+                    for f in p1_fields:
+                        if f.get('source_column') and f.get('name') and f['source_column'] != f['name']:
+                            col_alias_map[f['source_column']] = f['name']
+                    
+                    def resolve_column(col_name):
+                        """Resolve a column reference to an actual column name in primary_df"""
+                        if col_name in primary_df.columns:
+                            return col_name
+                        # Try alias mapping (key renames + field source→name mappings)
+                        if col_name in col_alias_map:
+                            return col_alias_map[col_name]
+                        # Try case-insensitive match
+                        for actual_col in primary_df.columns:
+                            if actual_col.lower() == col_name.lower():
+                                return actual_col
+                        # Try partial match — prefer longer matches (most specific) first
+                        # This prevents "Amount" from matching "Tax Amount" when "Total Amount" also exists
+                        candidate_matches = []
+                        for actual_col in primary_df.columns:
+                            if col_name.lower() in actual_col.lower() or actual_col.lower() in col_name.lower():
+                                shared_words = set(col_name.lower().split()) & set(actual_col.lower().split())
+                                if len(shared_words) > 0:
+                                    # Score: favor matches where the column name is closer in length
+                                    score = len(shared_words) - abs(len(col_name) - len(actual_col)) * 0.01
+                                    candidate_matches.append((score, actual_col))
+                        if candidate_matches:
+                            # Sort by score descending (best match first)
+                            candidate_matches.sort(key=lambda x: x[0], reverse=True)
+                            best_match = candidate_matches[0][1]
+                            col_alias_map[col_name] = best_match
+                            return best_match
+                            
+                        # Legacy fallback: if Phase 4 is looking for 'Sales Amount' (old default)
+                        # but it's not found, try mapping it to the first Phase 1 field
+                        logger.info(f"PHASE 4 DIAGNOSTIC: resolve_column('{col_name}') fallback check. p1_fields={p1_fields}, primary_df.columns={list(primary_df.columns)}")
+                        if col_name.strip().lower() == 'sales amount' and len(p1_fields) > 0:
+                            first_p1_field = p1_fields[0].get('name')
+                            logger.info(f"PHASE 4 DIAGNOSTIC: first_p1_field='{first_p1_field}'")
+                            if first_p1_field and first_p1_field in primary_df.columns:
+                                col_alias_map[col_name] = first_p1_field
+                                return first_p1_field
+                                
+                        return col_name
+                    
+                    # Resolve all field references
+                    row_fields = [resolve_column(rf) for rf in row_fields]
+                    column_fields = [resolve_column(cf) for cf in column_fields]
+                    for vf in value_fields:
+                        vf['column'] = resolve_column(vf['column'])
+                    for ff in filter_fields:
+                        if ff.get('column'):
+                            ff['column'] = resolve_column(ff['column'])
+                    
+                    # Validate that all referenced columns exist in primary_df
+                    all_ref_columns = row_fields + column_fields + [v['column'] for v in value_fields] + [f.get('column', '') for f in filter_fields]
+                    missing_cols = [c for c in all_ref_columns if c and c not in primary_df.columns]
+                    if missing_cols:
+                        msg = f"Phase 4 summary '{rule_name}' skipped: Columns not found in data: {', '.join(missing_cols)}"
+                        logger.warning(msg)
+                        phase4_errors.append(msg)
                         continue
                     
                     # Apply filters
@@ -3578,12 +3744,21 @@ def process_rules_background():
                                     filtered_df = filtered_df[pd.to_numeric(filtered_df[col], errors='coerce') < float(val)]
                                 except: pass
                     
+                    # Check if filtered data is empty
+                    if len(filtered_df) == 0:
+                        msg = f"Phase 4 summary '{rule_name}' skipped: No data rows after applying filters"
+                        logger.warning(msg)
+                        phase4_errors.append(msg)
+                        continue
+                    
                     # Build pivot: only include columns that actually exist in the dataframe
                     valid_values = [v['column'] for v in value_fields if v['column'] in filtered_df.columns]
                     valid_aggfuncs = {v['column']: v.get('aggregation', 'sum') for v in value_fields if v['column'] in filtered_df.columns}
                     
                     if not valid_values:
-                        logger.warning(f"Phase 4 summary '{p4_rule['name']}' skipped: No valid value columns found.")
+                        msg = f"Phase 4 summary '{rule_name}' skipped: No valid value columns found in filtered data. Available: {list(filtered_df.columns)}"
+                        logger.warning(msg)
+                        phase4_errors.append(msg)
                         continue
                     
                     # CRITICAL FIX: Ensure value columns are properly converted to numeric
@@ -3634,6 +3809,20 @@ def process_rules_background():
                         
                     pivot_table = pd.pivot_table(filtered_df, **pivot_kwargs)
                     pivot_table = pivot_table.fillna(0)
+                    
+                    # Drop rows where all numeric values are 0 (e.g. Cartesian product artifacts), excluding Grand Total
+                    if not pivot_table.empty:
+                        num_cols = pivot_table.select_dtypes(include=['number']).columns
+                        if len(num_cols) > 0:
+                            non_zero_mask = (pivot_table[num_cols] != 0).any(axis=1)
+                            if isinstance(pivot_table.index, pd.MultiIndex):
+                                try:
+                                    non_zero_mask = non_zero_mask | (pivot_table.index.get_level_values(0) == 'Grand Total')
+                                except: pass
+                            else:
+                                if 'Grand Total' in pivot_table.index:
+                                    non_zero_mask.loc['Grand Total'] = True
+                            pivot_table = pivot_table[non_zero_mask]
                     
                     # Log summary stats for debugging
                     total_rows_in_filter = len(filtered_df)
@@ -3724,10 +3913,33 @@ def process_rules_background():
         # Merge Phase 2 and Phase 3 output columns for ordering
         all_output_columns = {**output_columns, **phase3_output_columns}
         
-        # CRITICAL FIX: Ensure primary columns always come first
-        # primary_data.py always hardcodes the column as 'Order ID' in the DataFrame.
-        # So we MUST use 'Order ID' here to ensure it gets picked up and placed at the beginning.
-        PRIMARY_COL_ORDER = ['Unique_ID', 'Source_File_Name', 'Order ID', 'Sales Amount']
+        # Also merge Phase 1 field output columns so they participate in letter-based ordering
+        if isinstance(p1_fields, list):
+            for f in p1_fields:
+                letter = f.get('output_column')
+                name = f.get('name')
+                if letter and name:
+                    all_output_columns[letter] = name
+        
+        # Build dynamic PRIMARY_COL_ORDER based on actual column names in the DataFrame
+        # The first columns in primary_df are always: Unique_ID, Source_File_Name, primary key column, then field columns
+        PRIMARY_COL_ORDER = []
+        for col in primary_df.columns:
+            PRIMARY_COL_ORDER.append(col)
+            if len(PRIMARY_COL_ORDER) >= 4:
+                # Stop after including Unique_ID, Source_File_Name, primary key, and first field column
+                # This ensures Phase 1 columns are captured dynamically by actual names
+                found_all_phase1_fields = True
+                for f in p1_fields if isinstance(p1_fields, list) else []:
+                    fname = f.get('name', '')
+                    if fname and fname not in PRIMARY_COL_ORDER:
+                        found_all_phase1_fields = False
+                        break
+                if found_all_phase1_fields:
+                    break
+        
+        logger.info(f"Dynamic PRIMARY_COL_ORDER: {PRIMARY_COL_ORDER}")
+        logger.info(f"All output columns (incl Phase 1): {all_output_columns}")
         
         ordered_col_names = []
         cols_with_letters = []
@@ -3749,18 +3961,20 @@ def process_rules_background():
         cols_with_letters = sort_excel_columns(dict(cols_with_letters))
         
         # Build final column order:
-        # 1. Primary columns first (A, B, C)
+        # 1. Primary columns first (A, B, C - dynamically from Phase 1)
         # 2. Phase 2/3 columns in letter order (D onwards)
         # 3. Any other columns last
         for pc in PRIMARY_COL_ORDER:
-            if pc in primary_df.columns:
+            if pc in primary_df.columns and pc not in ordered_col_names:
                 ordered_col_names.append(pc)
         
         for letter, col in cols_with_letters:
-            ordered_col_names.append(col)
+            if col not in ordered_col_names:
+                ordered_col_names.append(col)
         
         for col in other_cols:
-            ordered_col_names.append(col)
+            if col not in ordered_col_names:
+                ordered_col_names.append(col)
         
         primary_df = primary_df[ordered_col_names]
         
@@ -3794,7 +4008,11 @@ def process_rules_background():
         if custom_filename:
             custom_parsed = parse_filename(custom_filename)
             if custom_parsed.get('parsed'):
-                parsed = custom_parsed
+                parsed['month_name'] = custom_parsed.get('month_name', parsed.get('month_name'))
+                parsed['month_number'] = custom_parsed.get('month_number', parsed.get('month_number'))
+                parsed['year'] = custom_parsed.get('year', parsed.get('year'))
+                parsed['financial_year'] = custom_parsed.get('financial_year', parsed.get('financial_year'))
+                parsed['parsed'] = True
         
         # Determine final filename
         final_output_filename = None
@@ -3807,20 +4025,20 @@ def process_rules_background():
             final_output_filename = f"{safe_name}_{timestamp_ist}.xlsx"
         
         if parsed['parsed']:
-            report_type = parsed['report_type']
+            report_type = None
             month_name = parsed['month_name']
             year = parsed['year']
             financial_year = parsed['financial_year']
             
             output_filename = final_output_filename or generate_processed_filename(
-                source_primary_filename, report_type, month_name, year
+                source_primary_filename, "Unknown", month_name, year
             )
             
             base_dir = get_physical_storage_path(PROCESSED_DIR, cid, mid)
             if not financial_year or not month_name:
                 storage_path = os.path.join(base_dir, 'Unclassified')
             else:
-                storage_path = os.path.join(base_dir, financial_year, report_type, month_name)
+                storage_path = os.path.join(base_dir, financial_year, month_name)
             
             os.makedirs(storage_path, exist_ok=True)
             output_path = os.path.join(storage_path, output_filename)
@@ -3846,11 +4064,51 @@ def process_rules_background():
         custom_primary_label = p1_config.get('column', 'Order ID')
         if custom_primary_label and custom_primary_label != 'Order ID':
             export_df = export_df.rename(columns={'Order ID': custom_primary_label})
-            
+        
+        # --- NUMERIC FORMATTING: Convert and round numeric columns ---
+        # Identify columns that appear to be numeric (from Phase 2 calculations, sumif, etc.)
+        numeric_cols = set()
+        for col in export_df.columns:
+            if col in ('Order ID', custom_primary_label, 'Source_File_Name', 'Unique_ID'):
+                continue
+            sample_vals = export_df[col].dropna().head(20).astype(str)
+            # Heuristic: if most non-empty values look numeric (digits, commas, dots, minus)
+            numeric_count = sample_vals.str.match(r'^-?[\d,]+\.?\d*$').sum()
+            if numeric_count > len(sample_vals) * 0.5:
+                numeric_cols.add(col)
+        
+        # Convert identified numeric columns to float and round to 2 decimals
+        for col in numeric_cols:
+            export_df[col] = pd.to_numeric(
+                export_df[col].astype(str).str.replace(',', '').str.strip(),
+                errors='coerce'
+            ).round(2)
+        
         sheets_data = {'Results': len(export_df)}
         with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
-            # Write main results
-            export_df.to_excel(writer, index=False, sheet_name='Results')
+            # Write main results with proper number formatting
+            ws_results = writer.book.create_sheet('Results')
+            
+            # Write headers
+            for col_idx, col_name in enumerate(export_df.columns, 1):
+                cell = ws_results.cell(row=1, column=col_idx, value=col_name)
+                cell.font = Font(bold=True, color='FFFFFF', size=10)
+                cell.fill = PatternFill(start_color='1F4E79', end_color='1F4E79', fill_type='solid')
+                cell.alignment = Alignment(horizontal='center', vertical='center')
+                cell.border = Border(bottom=Side(style='medium', color='1F4E79'))
+            
+            # Write data rows with number formatting for numeric columns
+            from openpyxl.utils.dataframe import dataframe_to_rows
+            for row_idx, row_data in enumerate(dataframe_to_rows(export_df, index=False, header=False), 2):
+                for col_idx, value in enumerate(row_data, 1):
+                    col_name = export_df.columns[col_idx - 1]
+                    cell = ws_results.cell(row=row_idx, column=col_idx, value=value)
+                    if col_name in numeric_cols and isinstance(value, (int, float)):
+                        cell.number_format = '#,##0.00'
+                        cell.alignment = Alignment(horizontal='right', vertical='center')
+            
+            # Auto-fit columns
+            _autofit_columns_fast(ws_results, sample_rows=50)
             
             # Separate summaries by output_mode
             shared_summaries = {}   # output_mode == 'summary_sheet'
@@ -3867,6 +4125,7 @@ def process_rules_background():
             # Write shared summaries to a single "Summary" sheet
             if shared_summaries:
                 summary_ws = writer.book.create_sheet('Summary')
+                sheets_data['Summary'] = sum(len(sd['data']) for sd in shared_summaries.values())
                 current_row = 1
                 
                 # Main header
@@ -4014,9 +4273,16 @@ def process_rules_background():
         processed_at_india = datetime.now(india_tz).strftime('%d/%m/%Y %I:%M:%S %p IST')
         
         with processing_lock:
+            # Build summary message for user
+            summary_msg = f"Processing completed in {elapsed:.1f}s. {len(primary_df)} rows processed."
+            if phase4_errors:
+                summary_msg += f" {len(summary_sheets)} summary generated, {len(phase4_errors)} skipped."
+            elif summary_sheets:
+                summary_msg += f" {len(summary_sheets)} summaries generated."
+            
             processing_status["result"] = {
                 "success": True,
-                "message": f"Processing completed in {elapsed:.1f}s. {len(primary_df)} rows processed.",
+                "message": summary_msg,
                 "total_rules": len(all_rules),
                 "rows_processed": len(primary_df),
                 "processed_at": processed_at_india,
@@ -4028,7 +4294,9 @@ def process_rules_background():
                 "status": "completed",
                 "filtered": filter_sources is not None,
                 "filter_count": len(filter_sources) if filter_sources else 0,
-                "total_rows_before_filter": before_count if filter_sources else len(primary_df)
+                "total_rows_before_filter": before_count if filter_sources else len(primary_df),
+                "summary_count": len(summary_sheets),
+                "phase4_errors": phase4_errors if phase4_errors else None
             }
             processing_status["progress"] = "completed"
             processing_status["is_processing"] = False
@@ -4328,11 +4596,17 @@ async def preview_summary(
         all_needed = row_fields + column_fields + [v['column'] for v in value_fields]
         missing = [c for c in all_needed if c not in available_columns and c not in ['Unique_ID', 'Primary_Value']]
         
+        # Identify value field columns (these need NUMERIC dummy data, not strings)
+        value_col_names = set(v['column'] for v in value_fields)
+        
         for col in all_needed:
             if col not in preview_df.columns and col != 'Unique_ID' and col != 'Primary_Value':
                 import random
                 col_lower = col.lower()
-                if col_lower in ['order_type']:
+                # Check if this is a value field (needs numeric data for aggregation)
+                if col in value_col_names:
+                    preview_df[col] = [random.randint(100, 100000) for _ in range(len(preview_df))]
+                elif col_lower in ['order_type']:
                     samples = ['Prepaid', 'COD', 'Return', 'Exchange']
                     preview_df[col] = [random.choice(samples) for _ in range(len(preview_df))]
                 elif col_lower in ['payment_gateway']:
@@ -4398,6 +4672,19 @@ async def preview_summary(
         
         pivot_table = pd.pivot_table(preview_df, **pivot_kwargs)
         pivot_table = pivot_table.fillna(0)
+        
+        if not pivot_table.empty:
+            num_cols = pivot_table.select_dtypes(include=['number']).columns
+            if len(num_cols) > 0:
+                non_zero_mask = (pivot_table[num_cols] != 0).any(axis=1)
+                if isinstance(pivot_table.index, pd.MultiIndex):
+                    try:
+                        non_zero_mask = non_zero_mask | (pivot_table.index.get_level_values(0) == 'Grand Total')
+                    except: pass
+                else:
+                    if 'Grand Total' in pivot_table.index:
+                        non_zero_mask.loc['Grand Total'] = True
+                pivot_table = pivot_table[non_zero_mask]
         
         # Rename index and columns to custom primary column label if configured
         custom_primary_label = p1_config.get('column', 'Primary_Value')
@@ -4887,7 +5174,14 @@ async def preview_processed_file(file_id: int):
                     if i < len(row_list):
                         cell = row_list[i]
                         if pd.notna(cell):
-                            data_row.append(str(cell))
+                            # Format numeric values with comma and 2 decimals
+                            if isinstance(cell, (int, float)):
+                                if cell == int(cell):
+                                    data_row.append(f"{cell:,.2f}")
+                                else:
+                                    data_row.append(f"{cell:,.2f}")
+                            else:
+                                data_row.append(str(cell))
                         else:
                             data_row.append('')  # Empty cell placeholder
                     else:
@@ -5186,11 +5480,31 @@ async def get_processed_raw_data(file_id: int, page: int = 1, limit: int = 100):
         except Exception:
             df = pd.read_excel(file['file_path'], sheet_name=0, header=0, dtype=str)
         
+        # Identify numeric columns for comma formatting in dashboard view
+        numeric_cols = set()
+        for col in df.columns:
+            if col in ('Order ID', 'Source_File_Name', 'Unique_ID'):
+                continue
+            sample_vals = df[col].dropna().head(20)
+            numeric_count = sample_vals.str.match(r'^-?[\d,]+\.?\d*$').sum()
+            if numeric_count > len(sample_vals) * 0.5:
+                numeric_cols.add(col)
+        
         total_rows = len(df)
         start_idx = (page - 1) * limit
         end_idx = start_idx + limit
         
         page_data = clean_nan_values(df.iloc[start_idx:end_idx].to_dict(orient='records'))
+        
+        # Format numeric values with comma and 2 decimals for dashboard display
+        for row in page_data:
+            for col in numeric_cols:
+                if col in row and row[col] is not None:
+                    try:
+                        val = float(str(row[col]).replace(',', ''))
+                        row[col] = f"{val:,.2f}"
+                    except (ValueError, TypeError):
+                        pass
         
         return {
             "success": True,

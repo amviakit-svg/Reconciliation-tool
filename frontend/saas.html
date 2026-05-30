@@ -2463,17 +2463,19 @@ function navigateTo(page) {
         syncTokenToLocalStorage();
         const iframe = document.getElementById(`iframe-${page}`);
         if (iframe) {
-            const ts = new Date().getTime();
-            const targetSrc = page === 'primary' ? `index.html?v=${ts}#dashboard` : 
-                              page === 'processing' ? `index.html?v=${ts}#process` : 
-                              `index.html?v=${ts}#${page}`;
+            // Only set the src if it hasn't been loaded yet
             if (!iframe.src || iframe.src === 'about:blank' || iframe.src.indexOf('index.html') === -1) {
+                const ts = new Date().getTime();
+                const targetSrc = page === 'primary' ? `index.html?v=${ts}#dashboard` : 
+                                  page === 'processing' ? `index.html?v=${ts}#process` : 
+                                  `index.html?v=${ts}#${page}`;
                 iframe.src = targetSrc;
             } else {
-                iframe.src = 'about:blank';
-                setTimeout(() => {
-                    iframe.src = targetSrc;
-                }, 50);
+                // If the iframe is already loaded, DO NOT reload it (which wipes state).
+                // Instead, send a message to trigger a graceful dropdown refresh.
+                try {
+                    iframe.contentWindow.postMessage({ type: 'saas_refresh' }, '*');
+                } catch(e) {}
             }
         }
     }

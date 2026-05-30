@@ -1448,38 +1448,26 @@ def get_processed_tree(company_id=None, module_id=None):
     for row in rows:
         r = dict(row)
         fy = r.get('financial_year') or str(r.get('year') or 'Unknown')
-        rt = r.get('report_type') or 'Unknown'
         mn = r.get('month_name') or 'Unknown'
         
         # 1. Get or create financial_year node
         if fy not in fy_map:
             fy_node = {
                 "financial_year": fy,
-                "report_types": []
+                "months": []
             }
             fy_nodes.append(fy_node)
             fy_map[fy] = (fy_node, {})
             
-        fy_node, rt_map = fy_map[fy]
+        fy_node, mn_map = fy_map[fy]
         
-        # 2. Get or create report_type node
-        if rt not in rt_map:
-            rt_node = {
-                "report_type": rt,
-                "months": []
-            }
-            fy_node["report_types"].append(rt_node)
-            rt_map[rt] = (rt_node, {})
-            
-        rt_node, mn_map = rt_map[rt]
-        
-        # 3. Get or create month node
+        # 2. Get or create month node
         if mn not in mn_map:
             mn_node = {
                 "month_name": mn,
                 "file_count": 0
             }
-            rt_node["months"].append(mn_node)
+            fy_node["months"].append(mn_node)
             mn_map[mn] = mn_node
             
         mn_node = mn_map[mn]
