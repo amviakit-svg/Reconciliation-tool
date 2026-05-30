@@ -93,6 +93,14 @@
             document.head.appendChild(style);
         }
     </script>
+    <script>
+        // Safely inject CSS to hide the standalone header if loaded inside the SaaS wrapper iframe
+        if (window.self !== window.top) {
+            const style = document.createElement('style');
+            style.textContent = 'header { display: none !important; } main { padding-top: 1rem !important; padding-bottom: 1rem !important; }';
+            document.head.appendChild(style);
+        }
+    </script>
 </head>
 <body class="bg-gray-50 min-h-screen">
 
@@ -620,7 +628,7 @@
                     <h3 class="text-lg font-semibold text-gray-900 mb-4">Select Primary Data</h3>
                     <p class="text-sm text-gray-600 mb-6">Choose the file, sheet, and column that will serve as the primary reference for all reconciliation rules.</p>
 
-                    <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-2">Select File</label>
                             <select id="phase1-file" onchange="loadPhase1Sheets()" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
@@ -639,12 +647,22 @@
                                 <option value="">-- Select Column --</option>
                             </select>
                         </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-2">Sales Amount Column <span class="text-red-500">*</span></label>
-                            <select id="phase1-sales-column" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-green-500 focus:border-green-500">
-                                <option value="">-- Select Column --</option>
-                            </select>
-                            <p class="text-xs text-gray-400 mt-1">Required. Uses SUMIF to aggregate sales amounts from secondary files</p>
+                    </div>
+
+                    <!-- Dynamic Fields Section -->
+                    <div class="mb-6 border border-gray-200 rounded-lg p-4 bg-gray-50">
+                        <div class="flex items-center justify-between mb-4">
+                            <div>
+                                <h3 class="text-sm font-semibold text-gray-800">Additional Fields</h3>
+                                <p class="text-xs text-gray-500 mt-1">Add fields to be carried over from the primary file into your master file. "Unique ID", "Source File", and "Primary Column" are fixed at columns A, B, and C.</p>
+                            </div>
+                            <button onclick="addPhase1Field()" class="inline-flex items-center space-x-1 bg-white border border-gray-300 text-gray-700 px-3 py-1.5 rounded-lg text-sm hover:bg-gray-50 transition-colors">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                                <span>Add Field</span>
+                            </button>
+                        </div>
+                        <div id="phase1-dynamic-fields" class="space-y-4">
+                            <!-- Field rows will be added here -->
                         </div>
                     </div>
 
@@ -677,10 +695,19 @@
                             </table>
                         </div>
                     </div>
+
+                    <!-- Local Save Button for Immediate Feedback -->
+                    <div class="mt-6 border-t pt-4 flex justify-end">
+                        <button onclick="savePhase1Rule(true)" id="phase1-local-save-btn" class="bg-blue-600 text-white font-medium py-2 px-6 rounded-lg hover:bg-blue-700 transition-colors inline-flex items-center gap-2">
+                            <span id="phase1-local-save-spinner" class="spinner-sm hidden"></span>
+                            <span>Confirm & Save Phase 1 Selection</span>
+                        </button>
+                    </div>
                 </div>
             </div>
 
             <!-- Phase 2: Matching Rules -->
+
             <div id="phase-2" class="phase-content hidden">
                 <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                     <div class="flex items-center justify-between mb-6">
@@ -887,9 +914,42 @@
 
                     <!-- Custom Filename Input -->
                     <div class="bg-white rounded-lg border border-gray-200 p-5 mb-6">
-                        <label class="block text-sm font-semibold text-gray-900 mb-2">Custom Output File Name <span class="text-red-500">*</span></label>
-                        <p class="text-xs text-gray-500 mb-3">Enter the name for the final processed Excel file. The current Date and Time will be automatically appended.</p>
-                        <input type="text" id="custom-output-filename" class="w-full px-4 py-3 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm" placeholder="e.g. Myntra_May_Settlement">
+                        <label class="block text-sm font-semibold text-gray-900 mb-2">Output File Details <span class="text-red-500">*</span></label>
+                        <p class="text-xs text-gray-500 mb-3">Select Month and Year. The file name will be fixed as "Reconciliation Report [Month] [Year]".</p>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-xs font-medium text-gray-700 mb-1">Month</label>
+                                <select id="output-month" class="w-full px-4 py-3 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm">
+                                    <option value="">Select Month</option>
+                                    <option value="January">January</option>
+                                    <option value="February">February</option>
+                                    <option value="March">March</option>
+                                    <option value="April">April</option>
+                                    <option value="May">May</option>
+                                    <option value="June">June</option>
+                                    <option value="July">July</option>
+                                    <option value="August">August</option>
+                                    <option value="September">September</option>
+                                    <option value="October">October</option>
+                                    <option value="November">November</option>
+                                    <option value="December">December</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-gray-700 mb-1">Year</label>
+                                <select id="output-year" class="w-full px-4 py-3 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm">
+                                    <option value="">Select Year</option>
+                                    <option value="2023">2023</option>
+                                    <option value="2024">2024</option>
+                                    <option value="2025">2025</option>
+                                    <option value="2026">2026</option>
+                                    <option value="2027">2027</option>
+                                    <option value="2028">2028</option>
+                                    <option value="2029">2029</option>
+                                    <option value="2030">2030</option>
+                                </select>
+                            </div>
+                        </div>
                     </div>
 
                     <button onclick="processAllRules()" id="process-btn" class="w-full bg-blue-600 text-white text-lg font-semibold py-4 rounded-xl hover:bg-blue-700 transition-colors flex items-center justify-center space-x-3">
@@ -1372,24 +1432,27 @@
         }
         
         /**
-         * Get all currently used output columns from Phase 2 and Phase 3
+         * Get all currently used output columns from Phase 1, Phase 2, and Phase 3
          */
         function getAllUsedOutputColumns() {
             const used = [];
             
-            // Phase 2 rules
-            document.querySelectorAll('#matching-rules-body .rule-output-column').forEach(input => {
+            document.querySelectorAll('.field-output-col').forEach(input => {
                 const val = input.value?.trim();
                 if (val) used.push(val);
             });
             
-            // Phase 3 remark groups
+            document.querySelectorAll('.rule-output-column').forEach(input => {
+                const val = input.value?.trim();
+                if (val) used.push(val);
+            });
+            
             document.querySelectorAll('.group-output-col').forEach(input => {
                 const val = input.value?.trim();
                 if (val) used.push(val);
             });
             
-            return used;
+            return [...new Set(used)];
         }
         
         /**
@@ -1449,23 +1512,29 @@
          */
         function resequenceOutputColumns() {
             // Collect all output column elements with their current values
+            const phase1Elements = [];
             const phase2Elements = [];
-            document.querySelectorAll('#matching-rules-body .rule-output-column').forEach(el => {
-                if (el.value?.trim()) {
-                    phase2Elements.push({ element: el, oldValue: el.value.trim() });
-                }
-            });
-            
             const phase3Elements = [];
-            document.querySelectorAll('.group-output-col').forEach(el => {
-                if (el.value?.trim()) {
-                    phase3Elements.push({ element: el, oldValue: el.value.trim() });
-                }
+            
+            document.querySelectorAll('.field-output-col').forEach(el => {
+                if (el.value?.trim()) phase1Elements.push({ element: el, oldValue: el.value.trim() });
             });
             
-            // Combine and sort by current column letter
-            const allElements = [...phase2Elements, ...phase3Elements];
-            allElements.sort((a, b) => columnLetterToNumber(a.oldValue) - columnLetterToNumber(b.oldValue));
+            document.querySelectorAll('.rule-output-column').forEach(el => {
+                if (el.value?.trim()) phase2Elements.push({ element: el, oldValue: el.value.trim() });
+            });
+            
+            document.querySelectorAll('.group-output-col').forEach(el => {
+                if (el.value?.trim()) phase3Elements.push({ element: el, oldValue: el.value.trim() });
+            });
+            
+            // Sort each phase's elements by their current column letter
+            phase1Elements.sort((a, b) => columnLetterToNumber(a.oldValue) - columnLetterToNumber(b.oldValue));
+            phase2Elements.sort((a, b) => columnLetterToNumber(a.oldValue) - columnLetterToNumber(b.oldValue));
+            phase3Elements.sort((a, b) => columnLetterToNumber(a.oldValue) - columnLetterToNumber(b.oldValue));
+            
+            // Combine in strict phase order
+            const allElements = [...phase1Elements, ...phase2Elements, ...phase3Elements];
             
             // Reassign sequentially starting from D (column 4) to reserve A, B, C for primary data
             const MIN_COLUMN_NUMBER = 4; // D
@@ -1488,13 +1557,16 @@
         function refreshAllColumnDropdowns() {
             const used = getAllUsedOutputColumns();
             
-            // Update Phase 2 dropdowns
-            document.querySelectorAll('#matching-rules-body .rule-output-column').forEach(select => {
+            document.querySelectorAll('.field-output-col').forEach(select => {
                 const currentValue = select.value;
                 select.innerHTML = generateColumnLetterOptions(currentValue, used);
             });
             
-            // Update Phase 3 dropdowns
+            document.querySelectorAll('.rule-output-column').forEach(select => {
+                const currentValue = select.value;
+                select.innerHTML = generateColumnLetterOptions(currentValue, used);
+            });
+            
             document.querySelectorAll('.group-output-col').forEach(select => {
                 const currentValue = select.value;
                 select.innerHTML = generateColumnLetterOptions(currentValue, used);
@@ -3239,6 +3311,8 @@
                 updateProgress('Loading Phase 4...');
                 await loadSavedPhase4();
                 
+                resequenceOutputColumns();
+                
                 updateProgress('Complete!');
                 isRulesPageLoaded = true; // Mark as loaded
             } catch (error) {
@@ -3252,20 +3326,30 @@
             }
         }
 
-        async function loadPrimaryPreview(filename) {
+        async function loadPrimaryPreview(filename, primaryColumn, fields = []) {
             try {
                 const data = await apiCall(`/api/primary/preview/${encodeURIComponent(filename)}`);
                 const tbody = document.getElementById('phase1-preview-body');
                 
                 if (data.success && data.preview && data.preview.length > 0) {
-                    tbody.innerHTML = data.preview.map((row, idx) => `
-                        <tr class="border-b border-gray-100">
-                            <td class="px-3 py-2 text-gray-900 font-medium">${row.Unique_ID || idx + 1}</td>
-                            <td class="px-3 py-2 text-gray-700">${row.Source_File_Name || ''}</td>
-                            <td class="px-3 py-2 text-gray-700">${row['Order ID'] || ''}</td>
-                            <td class="px-3 py-2 text-gray-700">${row['Sales Amount'] != null ? row['Sales Amount'].toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : ''}</td>
-                        </tr>
-                    `).join('');
+                    tbody.innerHTML = data.preview.map((row, idx) => {
+                        let rowHtml = `
+                            <tr class="border-b border-gray-100">
+                                <td class="px-3 py-2 text-gray-900 font-medium">${row.Unique_ID || idx + 1}</td>
+                                <td class="px-3 py-2 text-gray-700">${row.Source_File_Name || ''}</td>
+                                <td class="px-3 py-2 text-gray-700">${primaryColumn && row[primaryColumn] != null ? row[primaryColumn] : ''}</td>
+                        `;
+                        fields.forEach(f => {
+                            const val = row[f.name];
+                            if (f.aggregation === 'SUM' && val != null) {
+                                rowHtml += `<td class="px-3 py-2 text-gray-700">${Number(val).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>`;
+                            } else {
+                                rowHtml += `<td class="px-3 py-2 text-gray-700">${val || ''}</td>`;
+                            }
+                        });
+                        rowHtml += `</tr>`;
+                        return rowHtml;
+                    }).join('');
                     
                     // Update count badge with total from preview API
                     const countBadge = document.getElementById('phase1-unique-count');
@@ -3304,9 +3388,19 @@
                     window.primaryValueColumnName = config.column || 'Order ID';
                     
                     // Update preview table header label dynamically
-                    const pHeader = document.getElementById('phase1-preview-primary-header');
-                    if (pHeader) {
-                        pHeader.textContent = 'Order ID';
+                    const thead = document.querySelector('#phase1-preview table thead tr');
+                    if (thead) {
+                        let headerHtml = `
+                            <th class="text-left font-medium text-gray-600 px-3 py-2">Unique ID</th>
+                            <th class="text-left font-medium text-gray-600 px-3 py-2">Source File</th>
+                            <th id="phase1-preview-primary-header" class="text-left font-medium text-gray-600 px-3 py-2">${config.column}</th>
+                        `;
+                        if (config.fields) {
+                            config.fields.forEach(f => {
+                                headerHtml += `<th class="text-left font-medium text-gray-600 px-3 py-2">${f.name}</th>`;
+                            });
+                        }
+                        thead.innerHTML = headerHtml;
                     }
                     
                     // Set dropdown values
@@ -3315,8 +3409,16 @@
                     document.getElementById('phase1-sheet').value = config.sheet_name;
                     await loadPhase1Columns();
                     document.getElementById('phase1-column').value = config.column;
-                    if (document.getElementById('phase1-sales-column') && config.sales_column) {
-                        document.getElementById('phase1-sales-column').value = config.sales_column;
+
+                    // Reconstruct dynamic fields
+                    const dynamicFieldsContainer = document.getElementById('phase1-dynamic-fields');
+                    if (dynamicFieldsContainer) {
+                        dynamicFieldsContainer.innerHTML = ''; // clear existing
+                        if (config.fields) {
+                            config.fields.forEach(field => {
+                                addPhase1Field(field);
+                            });
+                        }
                     }
 
                     // Show preview area
@@ -3328,7 +3430,7 @@
                     
                     // Load preview data from the primary file if available
                     if (config.primary_file) {
-                        await loadPrimaryPreview(config.primary_file);
+                        await loadPrimaryPreview(config.primary_file, config.column, config.fields || []);
                     }
                     
                     // Show saved info
@@ -4000,6 +4102,65 @@
                 }
             });
         }
+        function addPhase1Field(data = null) {
+            const container = document.getElementById('phase1-dynamic-fields');
+            if (!container) return;
+            
+            const fieldId = 'field_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+            
+            // Get currently loaded Phase 1 columns to populate dropdown
+            const colSelect = document.getElementById('phase1-column');
+            let sourceColOptions = '<option value="">-- Select Source Column --</option>';
+            if (colSelect && colSelect.options.length > 1) {
+                // skip the first placeholder option
+                for(let i=1; i<colSelect.options.length; i++) {
+                    const opt = colSelect.options[i];
+                    sourceColOptions += `<option value="${opt.value}" ${data && data.source_column === opt.value ? 'selected' : ''}>${opt.text}</option>`;
+                }
+            }
+            
+            // Generate output column options dynamically using central sequence logic
+            const targetCol = data ? data.output_column : getAutoAssignedColumn();
+            const outputColOptions = generateColumnLetterOptions(targetCol, getAllUsedOutputColumns());
+
+            const div = document.createElement('div');
+            div.className = 'flex items-end space-x-4 bg-white p-3 rounded border border-gray-200 phase1-field-row';
+            div.id = fieldId;
+            
+            div.innerHTML = `
+                <div class="flex-1">
+                    <label class="block text-xs font-medium text-gray-700 mb-1">Field Name <span class="text-red-500">*</span></label>
+                    <input type="text" class="p1-field-name w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:ring-2 focus:ring-blue-500" placeholder="e.g. Sales Amount" value="${data ? data.name : ''}">
+                </div>
+                <div class="flex-1">
+                    <label class="block text-xs font-medium text-gray-700 mb-1">Source Column <span class="text-red-500">*</span></label>
+                    <select class="p1-source-col w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:ring-2 focus:ring-blue-500">
+                        ${sourceColOptions}
+                    </select>
+                </div>
+                <div class="w-32">
+                    <label class="block text-xs font-medium text-gray-700 mb-1">Aggregation</label>
+                    <select class="p1-agg w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:ring-2 focus:ring-blue-500">
+                        <option value="SUM" ${data && data.aggregation === 'SUM' ? 'selected' : ''}>SUM</option>
+                        <option value="VLOOKUP" ${data && data.aggregation === 'VLOOKUP' ? 'selected' : ''}>VLOOKUP</option>
+                    </select>
+                </div>
+                <div class="w-28">
+                    <label class="block text-xs font-medium text-gray-700 mb-1">Output Col</label>
+                    <select class="p1-output-col field-output-col w-full border border-gray-300 rounded px-2 py-1.5 text-sm uppercase focus:ring-2 focus:ring-blue-500" onchange="resequenceOutputColumns()">
+                        ${outputColOptions}
+                    </select>
+                </div>
+                <div>
+                    <button type="button" onclick="this.parentElement.parentElement.remove(); resequenceOutputColumns();" class="text-red-500 hover:text-red-700 p-1.5" title="Remove Field">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                    </button>
+                </div>
+            `;
+            
+            container.appendChild(div);
+            resequenceOutputColumns();
+        }
 
         async function loadPhase1Sheets() {
             const fileId = document.getElementById('phase1-file').value;
@@ -4067,18 +4228,21 @@
                 });
             }
             
-            // Also populate sales amount column dropdown
-            if (salesSelect) {
-                salesSelect.innerHTML = '<option value="">-- Select Column --</option>';
+            // Populate all dynamic field source column dropdowns
+            const dynamicDropdowns = document.querySelectorAll('.p1-source-col');
+            dynamicDropdowns.forEach(dropdown => {
+                const currentValue = dropdown.value;
+                dropdown.innerHTML = '<option value="">-- Select Source Column --</option>';
                 if (data.success && data.columns) {
                     data.columns.forEach(col => {
-                        salesSelect.innerHTML += `<option value="${col}">${col}</option>`;
+                        dropdown.innerHTML += `<option value="${col}" ${col === currentValue ? 'selected' : ''}>${col}</option>`;
                     });
                 }
-            }
+            });
         }
 
         async function savePhase1Rule() {
+            try {
             try {
             clearFieldErrors();
             
@@ -4090,7 +4254,11 @@
             if (spinner) spinner.classList.remove('hidden');
             if (saveText) saveText.textContent = 'Processing...';
             
-            const fileId = String(document.getElementById('phase1-file').value || '');
+            
+            const fileEl = document.getElementById('phase1-file');
+            console.log('Diagnostic: phase1-file value is:', fileEl ? fileEl.value : 'Element not found', 'Options:', fileEl ? fileEl.options.length : 0);
+            const fileId = String(fileEl.value || '');
+
             const sheetName = String(document.getElementById('phase1-sheet').value || '');
             const column = String(document.getElementById('phase1-column').value || '');
             const salesColumn = String(document.getElementById('phase1-sales-column')?.value || '');
@@ -4113,10 +4281,36 @@
                 hasError = true;
                 if (!firstErrorElement) firstErrorElement = document.getElementById('phase1-column');
             }
-            if (!salesColumn) {
-                showFieldError('phase1-sales-column', 'Please select a sales amount column');
-                hasError = true;
-                if (!firstErrorElement) firstErrorElement = document.getElementById('phase1-sales-column');
+            // Gather dynamic fields
+            const fields = [];
+            const fieldRows = document.querySelectorAll('.phase1-field-row');
+            
+            for (let row of fieldRows) {
+                const name = row.querySelector('.p1-field-name').value.trim();
+                const sourceCol = row.querySelector('.p1-source-col').value;
+                const agg = row.querySelector('.p1-agg').value;
+                const outCol = row.querySelector('.p1-output-col').value;
+                
+                if (!name || !sourceCol) {
+                    hasError = true;
+                    showToast('Please fill all Name and Source Column inputs in Additional Fields', 'error');
+                    if (!firstErrorElement) firstErrorElement = row;
+                    break;
+                }
+                
+                if (fields.some(f => f.output_column === outCol)) {
+                    hasError = true;
+                    showToast(`Output column ${outCol} is used multiple times.`, 'error');
+                    if (!firstErrorElement) firstErrorElement = row;
+                    break;
+                }
+                
+                fields.push({
+                    name: name,
+                    source_column: sourceCol,
+                    aggregation: agg,
+                    output_column: outCol
+                });
             }
 
             if (hasError) {
@@ -4124,7 +4318,19 @@
                 if (saveBtn) saveBtn.disabled = false;
                 if (spinner) spinner.classList.add('hidden');
                 if (saveText) saveText.textContent = 'Save File Processing';
-                showToast('Please fix the highlighted fields before saving', 'error');
+                
+                let errorMsg = 'Please fix the highlighted fields before saving.';
+                if (typeof fieldErrors !== 'undefined' && fieldErrors && fieldErrors.length > 0) {
+                    errorMsg = fieldErrors.map(e => e.message).join(' | ');
+                } else if (!fileId) {
+                    errorMsg = 'Please go to Phase 1 and select the Primary File. (If you uploaded a new file, you must select it first!)';
+                } else if (!sheetName) {
+                    errorMsg = 'Please go to Phase 1 and select the Sheet.';
+                } else if (!column) {
+                    errorMsg = 'Please go to Phase 1 and select the Primary Column.';
+                }
+                showToast(errorMsg, 'error');
+
                 if (firstErrorElement) firstErrorElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
                 return;
             }
@@ -4135,7 +4341,7 @@
             generateForm.append('sheet_name', sheetName);
             generateForm.append('column_name', column);
             generateForm.append('header_row', 1);
-            generateForm.append('sales_amount_column', salesColumn);
+            generateForm.append('fields', JSON.stringify(fields));
 
             const genData = await apiCall('/api/primary/generate', {
                 method: 'POST',
@@ -4155,7 +4361,7 @@
                 file_id: fileId,
                 sheet_name: sheetName,
                 column: column,
-                sales_column: salesColumn || null,
+                fields: fields,
                 primary_file: genData.primary_file,
                 total_unique: genData.total_unique
             });
@@ -4182,10 +4388,18 @@
                 // Immediately update Phase 4 available columns
                 await loadAvailableColumnsForSummary();
                 
-                // Update preview table header label dynamically
-                const pHeader = document.getElementById('phase1-preview-primary-header');
-                if (pHeader) {
-                    pHeader.textContent = 'Order ID';
+                // Update preview table headers dynamically
+                const thead = document.querySelector('#phase1-preview table thead tr');
+                if (thead) {
+                    let headerHtml = `
+                        <th class="text-left font-medium text-gray-600 px-3 py-2">Unique ID</th>
+                        <th class="text-left font-medium text-gray-600 px-3 py-2">Source File</th>
+                        <th id="phase1-preview-primary-header" class="text-left font-medium text-gray-600 px-3 py-2">${column}</th>
+                    `;
+                    fields.forEach(f => {
+                        headerHtml += `<th class="text-left font-medium text-gray-600 px-3 py-2">${f.name}</th>`;
+                    });
+                    thead.innerHTML = headerHtml;
                 }
                 
                 // Show real preview of unique values
@@ -4198,14 +4412,24 @@
                 }
                 
                 if (genData.preview && genData.preview.length > 0) {
-                    document.getElementById('phase1-preview-body').innerHTML = genData.preview.map((row, idx) => `
-                        <tr>
-                            <td class="px-3 py-2 text-gray-900 font-medium">${row.Unique_ID}</td>
-                            <td class="px-3 py-2 text-gray-700">${row.Source_File_Name || ''}</td>
-                            <td class="px-3 py-2 text-gray-700">${row['Order ID']}</td>
-                            <td class="px-3 py-2 text-gray-700">${row['Sales Amount'] != null ? row['Sales Amount'].toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : ''}</td>
-                        </tr>
-                    `).join('');
+                    document.getElementById('phase1-preview-body').innerHTML = genData.preview.map((row, idx) => {
+                        let rowHtml = `
+                            <tr>
+                                <td class="px-3 py-2 text-gray-900 font-medium">${row.Unique_ID}</td>
+                                <td class="px-3 py-2 text-gray-700">${row.Source_File_Name || ''}</td>
+                                <td class="px-3 py-2 text-gray-700">${column && row[column] != null ? row[column] : ''}</td>
+                        `;
+                        fields.forEach(f => {
+                            const val = row[f.name];
+                            if (f.aggregation === 'SUM' && val != null) {
+                                rowHtml += `<td class="px-3 py-2 text-gray-700">${Number(val).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>`;
+                            } else {
+                                rowHtml += `<td class="px-3 py-2 text-gray-700">${val || ''}</td>`;
+                            }
+                        });
+                        rowHtml += `</tr>`;
+                        return rowHtml;
+                    }).join('');
                 }
 
                 // Add download button
@@ -4226,6 +4450,19 @@
                 const existingBtn = previewDiv.querySelector('.mt-4.flex');
                 if (existingBtn) existingBtn.remove();
                 previewDiv.appendChild(downloadBtn);
+            }
+        
+            } catch(err) {
+
+                console.error("Error in savePhase1Rule:", err);
+                const saveBtn = document.getElementById('phase1-save-btn');
+                const spinner = document.getElementById('phase1-save-spinner');
+                const saveText = document.getElementById('phase1-save-text');
+                if (saveBtn) saveBtn.disabled = false;
+                if (spinner) spinner.classList.add('hidden');
+                if (saveText) saveText.textContent = 'Save File Processing';
+                showToast(err.message || 'An unexpected error occurred.', 'error');
+
             }
         
             } catch(err) {
@@ -4350,6 +4587,7 @@
             if (!savedData) {
                 showToast('Calculation rule added. Add multiple columns to sum.', 'info');
             }
+            resequenceOutputColumns();
         }
 
         function buildCalcColumnRow(rowId, colIndex, colOptions, selectedValue = '') {
@@ -4880,6 +5118,7 @@
             
             // Populate file dropdowns
             populateRuleFileDropdowns(rowId);
+            resequenceOutputColumns();
         }
 
         async function populateRuleFileDropdowns(rowId) {
@@ -5288,7 +5527,19 @@
             });
 
             if (hasError) {
-                showToast('Please fix the highlighted fields before saving', 'error');
+                
+                let errorMsg = 'Please fix the highlighted fields before saving.';
+                if (typeof fieldErrors !== 'undefined' && fieldErrors && fieldErrors.length > 0) {
+                    errorMsg = fieldErrors.map(e => e.message).join(' | ');
+                } else if (!fileId) {
+                    errorMsg = 'Please go to Phase 1 and select the Primary File. (If you uploaded a new file, you must select it first!)';
+                } else if (!sheetName) {
+                    errorMsg = 'Please go to Phase 1 and select the Sheet.';
+                } else if (!column) {
+                    errorMsg = 'Please go to Phase 1 and select the Primary Column.';
+                }
+                showToast(errorMsg, 'error');
+
                 scrollToFirstError();
                 return;
             }
@@ -5412,6 +5663,7 @@
             
             container.appendChild(groupDiv);
             showToast('Remarks group added. Add remark rules with conditions.', 'success');
+            resequenceOutputColumns();
         }
 
         function deleteRemarksGroup(groupId) {
@@ -5671,7 +5923,19 @@
             });
             
             if (hasError) {
-                showToast('Please fix the highlighted fields before saving', 'error');
+                
+                let errorMsg = 'Please fix the highlighted fields before saving.';
+                if (typeof fieldErrors !== 'undefined' && fieldErrors && fieldErrors.length > 0) {
+                    errorMsg = fieldErrors.map(e => e.message).join(' | ');
+                } else if (!fileId) {
+                    errorMsg = 'Please go to Phase 1 and select the Primary File. (If you uploaded a new file, you must select it first!)';
+                } else if (!sheetName) {
+                    errorMsg = 'Please go to Phase 1 and select the Sheet.';
+                } else if (!column) {
+                    errorMsg = 'Please go to Phase 1 and select the Primary Column.';
+                }
+                showToast(errorMsg, 'error');
+
                 scrollToFirstError();
                 return;
             }
@@ -6384,7 +6648,19 @@
             });
             
             if (hasError) {
-                showToast('Please fix the highlighted fields before saving', 'error');
+                
+                let errorMsg = 'Please fix the highlighted fields before saving.';
+                if (typeof fieldErrors !== 'undefined' && fieldErrors && fieldErrors.length > 0) {
+                    errorMsg = fieldErrors.map(e => e.message).join(' | ');
+                } else if (!fileId) {
+                    errorMsg = 'Please go to Phase 1 and select the Primary File. (If you uploaded a new file, you must select it first!)';
+                } else if (!sheetName) {
+                    errorMsg = 'Please go to Phase 1 and select the Sheet.';
+                } else if (!column) {
+                    errorMsg = 'Please go to Phase 1 and select the Primary Column.';
+                }
+                showToast(errorMsg, 'error');
+
                 scrollToFirstError();
                 return;
             }
@@ -6481,7 +6757,6 @@
 
         // ==================== PROCESSED FILES DASHBOARD ====================
         let currentSelectedFY = null;
-        let currentSelectedType = null;
         let currentSelectedMonth = null;
         let autoRefreshInterval = null;
 
@@ -6540,37 +6815,20 @@
                         <div id="fy-children-${fy}" class="ml-6 hidden">
                 `;
                 
-                fyNode.report_types.forEach(typeNode => {
-                    const rt = typeNode.report_type;
+                fyNode.months.forEach(monthNode => {
+                    const mn = monthNode.month_name;
+                    const count = monthNode.file_count;
                     html += `
-                        <div class="mb-1">
-                            <div class="flex items-center space-x-2 px-2 py-1.5 rounded-lg hover:bg-gray-50 cursor-pointer" onclick="toggleType('${fy}', '${rt}')">
-                                <svg id="type-icon-${fy}-${rt}" class="w-3 h-3 text-gray-400 transform transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
-                                </svg>
-                                <span class="text-xs font-medium text-gray-600">${rt}</span>
-                                <span class="text-xs text-gray-400">(${typeNode.months.length} months)</span>
-                            </div>
-                            <div id="type-children-${fy}-${rt}" class="ml-4 hidden">
+                        <div class="flex items-center space-x-2 px-2 py-1.5 rounded-lg hover:bg-blue-50 cursor-pointer transition-colors" 
+                             onclick="selectMonth('${fy}', '${mn}')"
+                             id="month-item-${fy}-${mn}">
+                            <svg class="w-3 h-3 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+                            </svg>
+                            <span class="text-xs font-medium text-gray-700">${mn}</span>
+                            <span class="text-xs bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded-full">${count}</span>
+                        </div>
                     `;
-                    
-                    typeNode.months.forEach(monthNode => {
-                        const mn = monthNode.month_name;
-                        const count = monthNode.file_count;
-                        html += `
-                            <div class="flex items-center space-x-2 px-2 py-1 rounded-lg hover:bg-blue-50 cursor-pointer transition-colors" 
-                                 onclick="selectMonth('${fy}', '${rt}', '${mn}')"
-                                 id="month-item-${fy}-${rt}-${mn}">
-                                <svg class="w-3 h-3 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
-                                </svg>
-                                <span class="text-xs text-gray-700">${mn}</span>
-                                <span class="text-xs bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded-full">${count}</span>
-                            </div>
-                        `;
-                    });
-                    
-                    html += '</div></div>';
                 });
                 
                 html += '</div></div>';
@@ -6591,40 +6849,27 @@
             }
         }
 
-        function toggleType(fy, type) {
-            const children = document.getElementById(`type-children-${fy}-${type}`);
-            const icon = document.getElementById(`type-icon-${fy}-${type}`);
-            if (children.classList.contains('hidden')) {
-                children.classList.remove('hidden');
-                icon.classList.add('rotate-90');
-            } else {
-                children.classList.add('hidden');
-                icon.classList.remove('rotate-90');
-            }
-        }
-
-        async function selectMonth(fy, type, month) {
+        async function selectMonth(fy, month) {
             // Highlight selected
             document.querySelectorAll('[id^="month-item-"]').forEach(el => {
                 el.classList.remove('bg-blue-100', 'border-l-2', 'border-blue-500');
             });
-            const selected = document.getElementById(`month-item-${fy}-${type}-${month}`);
+            const selected = document.getElementById(`month-item-${fy}-${month}`);
             if (selected) {
                 selected.classList.add('bg-blue-100', 'border-l-2', 'border-blue-500');
             }
             
             currentSelectedFY = fy;
-            currentSelectedType = type;
             currentSelectedMonth = month;
             
-            document.getElementById('processed-files-title').textContent = `${fy} > ${type} > ${month}`;
+            document.getElementById('processed-files-title').textContent = `${fy} > ${month}`;
             
-            await loadProcessedFiles(fy, type, month);
+            await loadProcessedFiles(fy, month);
         }
 
-        async function loadProcessedFiles(fy, type, month) {
+        async function loadProcessedFiles(fy, month) {
             try {
-                const data = await apiCall(`/api/processed/files?financial_year=${encodeURIComponent(fy)}&report_type=${encodeURIComponent(type)}&month_name=${encodeURIComponent(month)}`);
+                const data = await apiCall(`/api/processed/files?financial_year=${encodeURIComponent(fy)}&month_name=${encodeURIComponent(month)}`);
                 if (data.success) {
                     renderProcessedFiles(data.files);
                 }
@@ -6883,8 +7128,8 @@
             try {
                 await apiCall(`/api/processed/${fileId}`, { method: 'DELETE' });
                 showToast('File deleted', 'success');
-                if (currentSelectedFY && currentSelectedType && currentSelectedMonth) {
-                    await loadProcessedFiles(currentSelectedFY, currentSelectedType, currentSelectedMonth);
+                if (currentSelectedFY && currentSelectedMonth) {
+                    await loadProcessedFiles(currentSelectedFY, currentSelectedMonth);
                 }
                 await loadProcessedTree();
             } catch (e) {
@@ -6971,6 +7216,7 @@
         // ==================== FINAL PROCESSING ====================
         async function processAllRules() {
             try {
+            try {
             const btn = document.getElementById('process-btn');
             const spinner = document.getElementById('process-spinner');
             const resultDiv = document.getElementById('process-result');
@@ -6989,15 +7235,17 @@
             }
             
             // Validate custom output filename
-            const customFilenameInput = document.getElementById('custom-output-filename');
-            const customFilename = customFilenameInput ? customFilenameInput.value.trim() : '';
-            if (!customFilename) {
+            const monthInput = document.getElementById('output-month');
+            const yearInput = document.getElementById('output-year');
+            const month = monthInput ? monthInput.value : '';
+            const year = yearInput ? yearInput.value : '';
+            if (!month || !year) {
                 btn.disabled = false;
                 spinner.classList.add('hidden');
-                showToast('Please enter a custom output file name', 'error');
-                if (customFilenameInput) customFilenameInput.focus();
+                showToast('Please select both Month and Year', 'error');
                 return;
             }
+            const customFilename = `Reconciliation Report ${month} ${year}`;
             
             // Reset all statuses
             document.getElementById('process-phase1-status').textContent = 'Pending';
@@ -7086,6 +7334,17 @@
                     showToast(statusData.message || 'Processing failed', 'error');
                 }
             }, 2000);
+        
+            } catch(err) {
+
+                console.error("Error starting processing:", err);
+                const btn = document.getElementById('process-all-btn');
+                const spinner = document.getElementById('process-all-spinner');
+                if (btn) btn.disabled = false;
+                if (spinner) spinner.classList.add('hidden');
+                showToast(err.message || 'Failed to start processing. Please try again.', 'error');
+
+            }
         
             } catch(err) {
 
@@ -8114,6 +8373,16 @@
             }
         }
 
+        // Handle soft-refresh messages from saas wrapper to update data without destroying state
+        window.addEventListener('message', function(e) {
+            if (e.data && e.data.type === 'saas_refresh') {
+                if (typeof loadFiles === 'function' && typeof currentFolderId !== 'undefined' && currentFolderId) loadFiles(currentFolderId);
+                if (typeof loadPhase1Files === 'function') loadPhase1Files();
+                if (typeof loadSecondaryFiles === 'function') loadSecondaryFiles();
+                if (typeof loadFinalProcessedHistory === 'function') loadFinalProcessedHistory();
+                if (typeof loadSourceFileFilter === 'function') loadSourceFileFilter();
+            }
+        });
         // Handle soft-refresh messages from saas wrapper to update data without destroying state
         window.addEventListener('message', function(e) {
             if (e.data && e.data.type === 'saas_refresh') {

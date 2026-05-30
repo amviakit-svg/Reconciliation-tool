@@ -3033,6 +3033,7 @@ def process_rules_background():
             except: pass
         if not isinstance(p1_config, dict): p1_config = {}
         p1_fields = p1_config.get('fields', [])
+        p1_fields = p1_config.get('fields', [])
         
         primary_generated_filename = p1_config.get('primary_file')
         # Default fallback if a Phase 2 rule doesn't specify its primary_column
@@ -3656,6 +3657,10 @@ def process_rules_background():
                     elif primary_key_col == 'Order ID':
                         col_alias_map['Primary_Value'] = 'Order ID'
 
+                        col_alias_map['Primary_Value'] = primary_key_col
+                    elif primary_key_col == 'Order ID':
+                        col_alias_map['Primary_Value'] = 'Order ID'
+
                     
                     # Build alias map from Phase 1 fields: source_column → display name
                     # This ensures references to original source column names resolve to the renamed output columns
@@ -3809,6 +3814,20 @@ def process_rules_background():
                         
                     pivot_table = pd.pivot_table(filtered_df, **pivot_kwargs)
                     pivot_table = pivot_table.fillna(0)
+                    
+                    # Drop rows where all numeric values are 0 (e.g. Cartesian product artifacts), excluding Grand Total
+                    if not pivot_table.empty:
+                        num_cols = pivot_table.select_dtypes(include=['number']).columns
+                        if len(num_cols) > 0:
+                            non_zero_mask = (pivot_table[num_cols] != 0).any(axis=1)
+                            if isinstance(pivot_table.index, pd.MultiIndex):
+                                try:
+                                    non_zero_mask = non_zero_mask | (pivot_table.index.get_level_values(0) == 'Grand Total')
+                                except: pass
+                            else:
+                                if 'Grand Total' in pivot_table.index:
+                                    non_zero_mask.loc['Grand Total'] = True
+                            pivot_table = pivot_table[non_zero_mask]
                     
                     # Drop rows where all numeric values are 0 (e.g. Cartesian product artifacts), excluding Grand Total
                     if not pivot_table.empty:
@@ -4125,6 +4144,7 @@ def process_rules_background():
             # Write shared summaries to a single "Summary" sheet
             if shared_summaries:
                 summary_ws = writer.book.create_sheet('Summary')
+                sheets_data['Summary'] = sum(len(sd['data']) for sd in shared_summaries.values())
                 sheets_data['Summary'] = sum(len(sd['data']) for sd in shared_summaries.values())
                 current_row = 1
                 
@@ -4658,6 +4678,21 @@ async def preview_summary(
         values = [v['column'] for v in value_fields]
         aggfuncs = {v['column']: v.get('aggregation', 'sum') for v in value_fields}
         
+        # Clean value columns to numeric to avoid string concatenation and float64 conversion errors
+        for val_col in values:
+            if val_col in preview_df.columns:
+                preview_df[val_col] = pd.to_numeric(preview_df[val_col].astype(str).str.replace(',', '').str.strip(), errors='coerce').fillna(0)
+                
+        # Handle nulls in grouping columns to prevent row dropping
+        for group_col in row_fields + column_fields:
+            if group_col in preview_df.columns:
+                s = preview_df[group_col].astype(str)
+                s = s.replace(r'^\s*$', 'Blank', regex=True)
+                s = s.replace(['nan', 'None', 'NaT', '<NA>'], 'Blank')
+                s = s.where(s != 'Blank', 'Blank')
+                preview_df[group_col] = s
+                preview_df[group_col] = preview_df[group_col].fillna('Blank')
+        
         pivot_kwargs = {
             'values': values,
             'aggfunc': aggfuncs,
@@ -4672,6 +4707,19 @@ async def preview_summary(
         
         pivot_table = pd.pivot_table(preview_df, **pivot_kwargs)
         pivot_table = pivot_table.fillna(0)
+        
+        if not pivot_table.empty:
+            num_cols = pivot_table.select_dtypes(include=['number']).columns
+            if len(num_cols) > 0:
+                non_zero_mask = (pivot_table[num_cols] != 0).any(axis=1)
+                if isinstance(pivot_table.index, pd.MultiIndex):
+                    try:
+                        non_zero_mask = non_zero_mask | (pivot_table.index.get_level_values(0) == 'Grand Total')
+                    except: pass
+                else:
+                    if 'Grand Total' in pivot_table.index:
+                        non_zero_mask.loc['Grand Total'] = True
+                pivot_table = pivot_table[non_zero_mask]
         
         if not pivot_table.empty:
             num_cols = pivot_table.select_dtypes(include=['number']).columns
