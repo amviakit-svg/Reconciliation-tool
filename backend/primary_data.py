@@ -93,6 +93,18 @@ def generate_primary_data(file_id, sheet_name, column_name, header_row=1, sales_
         
         if not master:
             raise Exception("Master file not found")
+            
+        # [DATA INTEGRITY GUARD] Check sync status of all files in this folder
+        conn_sync = get_db_connection()
+        try:
+            sync_statuses = conn_sync.execute("SELECT sync_status FROM files WHERE folder_id = ?", (folder_id,)).fetchall()
+            statuses = [row['sync_status'] for row in sync_statuses]
+            if 'in_processing' in statuses:
+                raise Exception("Cannot generate primary data: Files in this folder are currently syncing. Please wait for sync to complete.")
+            if 'rejected' in statuses or 'pending' in statuses:
+                raise Exception("Cannot generate primary data: Some files in this folder failed to sync (Rejected) or are Pending. Please resolve them first to ensure data completeness.")
+        finally:
+            conn_sync.close()
         
         company_id = master['company_id']
         module_id = master['module_id']

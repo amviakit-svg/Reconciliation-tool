@@ -189,6 +189,8 @@ def init_db():
             size INTEGER,
             sheet_names TEXT,
             header_row INTEGER DEFAULT 1,
+            sync_status TEXT DEFAULT 'pending',
+            sync_error TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (folder_id) REFERENCES folders (id)
         )
@@ -200,6 +202,13 @@ def init_db():
     if 'header_row' not in cols:
         try:
             conn.execute("ALTER TABLE files ADD COLUMN header_row INTEGER DEFAULT 1")
+            conn.commit()
+        except Exception:
+            pass
+    if 'sync_status' not in cols:
+        try:
+            conn.execute("ALTER TABLE files ADD COLUMN sync_status TEXT DEFAULT 'pending'")
+            conn.execute("ALTER TABLE files ADD COLUMN sync_error TEXT")
             conn.commit()
         except Exception:
             pass
@@ -218,8 +227,33 @@ def init_db():
             concat_columns TEXT,
             rejected_files TEXT,
             formulas TEXT,
+            auto_sync INTEGER DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (folder_id) REFERENCES folders (id)
+        )
+    ''')
+    
+    # Migrate existing master_files table if auto_sync doesn't exist
+    cursor = conn.execute("PRAGMA table_info(master_files)")
+    cols = [row['name'] for row in cursor.fetchall()]
+    if 'auto_sync' not in cols:
+        try:
+            conn.execute("ALTER TABLE master_files ADD COLUMN auto_sync INTEGER DEFAULT 0")
+            conn.commit()
+        except Exception:
+            pass
+
+    # Notifications table
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id INTEGER,
+            module_id INTEGER,
+            type TEXT NOT NULL,
+            message TEXT NOT NULL,
+            link TEXT,
+            is_read INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
     
@@ -468,30 +502,30 @@ def move_file(file_id, new_folder_id):
     conn.commit()
     conn.close()
 
-def save_master_file(folder_id, db_path, sheet_name=None, columns=None, header_row=None, concat_columns=None, rejected_files=None, formulas=None, company_id=None, module_id=None):
+def save_master_file(folder_id, db_path, sheet_name=None, columns=None, header_row=None, concat_columns=None, rejected_files=None, formulas=None, company_id=None, module_id=None, auto_sync=None):
     conn = get_db_connection()
     # Check if exists
     existing = conn.execute('SELECT id FROM master_files WHERE folder_id = ?', (folder_id,)).fetchone()
     if existing:
         conn.execute(
             '''UPDATE master_files SET db_path = ?, sheet_name = ?, columns = ?, header_row = ?, 
-               concat_columns = ?, rejected_files = ?, formulas = ?, company_id = ?, module_id = ? WHERE folder_id = ?''',
+               concat_columns = ?, rejected_files = ?, formulas = ?, company_id = ?, module_id = ?, auto_sync = COALESCE(?, auto_sync) WHERE folder_id = ?''',
             (db_path, sheet_name, json.dumps(columns) if columns else None, header_row, 
              json.dumps(concat_columns) if concat_columns else None, 
              json.dumps(rejected_files) if rejected_files else None,
              json.dumps(formulas) if formulas else None,
-             company_id, module_id, folder_id)
+             company_id, module_id, auto_sync, folder_id)
         )
     else:
         conn.execute(
             '''INSERT INTO master_files (folder_id, db_path, sheet_name, columns, header_row, 
-               concat_columns, rejected_files, formulas, company_id, module_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+               concat_columns, rejected_files, formulas, company_id, module_id, auto_sync)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0))''',
             (folder_id, db_path, sheet_name, json.dumps(columns) if columns else None, header_row,
              json.dumps(concat_columns) if concat_columns else None,
              json.dumps(rejected_files) if rejected_files else None,
              json.dumps(formulas) if formulas else None,
-             company_id, module_id)
+             company_id, module_id, auto_sync)
         )
     conn.commit()
     conn.close()
@@ -721,6 +755,90 @@ def get_company_storage_path(company_id, module_id=None, subfolder=None):
         return format_storage_error("unknown", {"detail": str(e)})
     finally:
         conn.close()
+
+def add_notification(company_id: int, module_id: int, notif_type: str, message: str, link: str = None):
+    import logging
+    logger = logging.getLogger("reconciliation_tool")
+    try:
+        conn = get_db_connection()
+        conn.execute(
+            "INSERT INTO notifications (company_id, module_id, type, message, link) VALUES (?, ?, ?, ?, ?)",
+            (company_id, module_id, notif_type, message, link)
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error(f"Error adding notification: {e}")
+
+def get_recent_notifications(company_id: int, module_id: int, limit: int = 50):
+    import logging
+    logger = logging.getLogger("reconciliation_tool")
+    try:
+        conn = get_db_connection()
+        query = "SELECT * FROM notifications WHERE 1=1"
+        params = []
+        if company_id:
+            query += " AND company_id = ?"
+            params.append(company_id)
+        if module_id:
+            query += " AND module_id = ?"
+            params.append(module_id)
+            
+        query += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+        
+        rows = conn.execute(query, params).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logger.error(f"Error getting notifications: {e}")
+        return []
+
+def mark_notification_read(notification_id: int, company_id: int = None):
+    import logging
+    logger = logging.getLogger("reconciliation_tool")
+    try:
+        conn = get_db_connection()
+        if company_id:
+            conn.execute("UPDATE notifications SET is_read = 1 WHERE id = ? AND company_id = ?", (notification_id, company_id))
+        else:
+            conn.execute("UPDATE notifications SET is_read = 1 WHERE id = ?", (notification_id,))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        logger.error(f"Error marking notification read: {e}")
+        return False
+
+def mark_all_notifications_read(company_id: int, module_id: int = None):
+    import logging
+    logger = logging.getLogger("reconciliation_tool")
+    try:
+        conn = get_db_connection()
+        query = "UPDATE notifications SET is_read = 1 WHERE company_id = ?"
+        params = [company_id]
+        if module_id:
+            query += " AND module_id = ?"
+            params.append(module_id)
+            
+        conn.execute(query, params)
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        logger.error(f"Error marking all notifications read: {e}")
+        return False
+
+def cleanup_old_notifications(days: int = 30):
+    import logging
+    logger = logging.getLogger("reconciliation_tool")
+    try:
+        conn = get_db_connection()
+        conn.execute("DELETE FROM notifications WHERE created_at < datetime('now', ?)", (f'-{days} days',))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error(f"Error cleaning up old notifications: {e}")
 
 def get_user_folder_path(company_id, module_id, folder_name):
     """
@@ -1509,3 +1627,22 @@ def get_processed_stats(company_id=None, module_id=None):
         "report_types": report_types,
         "months": months
     }
+
+
+# --- AUTO-SYNC HELPER FUNCTIONS ---
+
+def set_file_sync_status(file_id, status, error=None):
+    conn = get_db_connection()
+    try:
+        conn.execute('UPDATE files SET sync_status = ?, sync_error = ? WHERE id = ?', (status, error, file_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+def get_files_with_sync_status(folder_id):
+    conn = get_db_connection()
+    try:
+        cursor = conn.execute('SELECT id, original_name, sync_status, sync_error FROM files WHERE folder_id = ?', (folder_id,))
+        return [dict(row) for row in cursor.fetchall()]
+    finally:
+        conn.close()

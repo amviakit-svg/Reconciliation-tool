@@ -205,10 +205,26 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup_event():
     try:
+        from database import init_db, cleanup_old_notifications
         init_db()
-        logger.info("Database initialized successfully")
+        logger.info("Database initialized successfully.")
+        
+        # Start a background thread to cleanup old notifications periodically (e.g. daily)
+        def cleanup_loop():
+            import time
+            while True:
+                try:
+                    cleanup_old_notifications(30)
+                except Exception as e:
+                    logger.error(f"Error in cleanup loop: {e}")
+                time.sleep(86400) # Sleep for 24 hours
+                
+        import threading
+        t = threading.Thread(target=cleanup_loop, daemon=True)
+        t.start()
+        
     except Exception as e:
-        logger.error(f"Database initialization failed: {e}")
+        logger.error(f"Failed to initialize database: {e}")
 
 # Directories (use BASE_DIR already set above for frozen runtime compatibility)
 UPLOAD_DIR = os.path.join(BASE_DIR, '..', 'data', 'uploads')
@@ -571,7 +587,7 @@ async def root():
 
 @app.get("/index.html")
 async def index_html():
-    return FileResponse(os.path.join(FRONTEND_DIR, 'index.html'))
+    return FileResponse(os.path.join(FRONTEND_DIR, 'index.html'), headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 @app.get("/legacy")
 async def legacy_tool():
@@ -644,12 +660,25 @@ async def api_delete_folder(folder_id: int, current_user: Optional[dict] = Depen
         # Move to recycle bin first
         try:
             folder_dict = dict(folder)
+            
+            # Physically rename the file to avoid conflict if uploaded again
+            old_path = folder_dict.get('path')
+            new_path = old_path
+            if old_path and os.path.exists(old_path):
+                import time
+                new_path = f"{old_path}.deleted.{int(time.time())}"
+                try:
+                    os.rename(old_path, new_path)
+                except OSError as e:
+                    logger.warning(f"Could not rename folder for recycle bin: {e}")
+                    new_path = old_path
+            
             move_to_recycle_bin(
                 company_id=cid,
                 entity_type='folder',
                 entity_id=folder_id,
                 entity_name=folder_dict.get('name'),
-                original_path=folder_dict.get('path'),
+                original_path=new_path,
                 metadata=folder_dict,
                 deleted_by=current_user.get('user_id') if current_user else None,
                 module_id=mid
@@ -754,6 +783,7 @@ async def api_rename_folder(
 
 @app.post("/api/upload")
 async def upload_file(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     folder_id: str = Form("1"),
     header_row: str = Form("1"),
@@ -845,6 +875,19 @@ async def upload_file(
         })
         
         logger.info(f"File '{original_filename}' uploaded to '{storage_dir}' (ID: {file_id})")
+
+        # Trigger Auto-Sync if enabled
+        try:
+            conn_sync = get_db_connection()
+            master = conn_sync.execute("SELECT auto_sync FROM master_files WHERE folder_id = ?", (folder_id_int,)).fetchone()
+            if master and dict(master).get('auto_sync') == 1:
+                from backend.auto_sync import trigger_folder_sync
+                background_tasks.add_task(trigger_folder_sync, folder_id_int)
+        except Exception as e:
+            logger.error(f"Failed to trigger auto_sync for upload: {e}")
+        finally:
+            try: conn_sync.close()
+            except: pass
         
         return {
             "success": True,
@@ -873,7 +916,7 @@ async def api_get_files(folder_id: int):
     return {"success": True, "files": files}
 
 @app.delete("/api/files/{file_id}")
-async def api_delete_file(file_id: int, current_user: Optional[dict] = Depends(get_optional_user)):
+async def api_delete_file(file_id: int, background_tasks: BackgroundTasks, current_user: Optional[dict] = Depends(get_optional_user)):
     try:
         from database import get_db_connection
         conn = get_db_connection()
@@ -888,12 +931,25 @@ async def api_delete_file(file_id: int, current_user: Optional[dict] = Depends(g
         # Move to recycle bin first
         try:
             file_dict = dict(file)
+            
+            # Physically rename the file to avoid conflict if uploaded again
+            old_path = file_dict.get('file_path')
+            new_path = old_path
+            if old_path and os.path.exists(old_path):
+                import time
+                new_path = f"{old_path}.deleted.{int(time.time())}"
+                try:
+                    os.rename(old_path, new_path)
+                except OSError as e:
+                    logger.warning(f"Could not rename file for recycle bin: {e}")
+                    new_path = old_path
+            
             move_to_recycle_bin(
                 company_id=cid,
                 entity_type='file',
                 entity_id=file_id,
                 entity_name=file_dict.get('original_name') or file_dict.get('name'),
-                original_path=file_dict.get('file_path'),
+                original_path=new_path,
                 metadata=file_dict,
                 deleted_by=current_user.get('user_id') if current_user else None,
                 module_id=mid
@@ -904,6 +960,22 @@ async def api_delete_file(file_id: int, current_user: Optional[dict] = Depends(g
         # Now delete from files table (but KEEP physical file for restore)
         delete_file(file_id)
         clear_file_cache()
+
+        # Trigger sync for deletions regardless of auto_sync setting
+        # to ensure master data does not contain deleted records.
+        try:
+            folder_id_int = dict(file).get('folder_id')
+            if folder_id_int:
+                conn_sync = get_db_connection()
+                master = conn_sync.execute("SELECT 1 FROM master_files WHERE folder_id = ?", (folder_id_int,)).fetchone()
+                if master:
+                    from backend.auto_sync import trigger_folder_sync
+                    # force_sync=False because we only want to process deletions if auto_sync=0
+                    background_tasks.add_task(trigger_folder_sync, folder_id_int, False)
+                conn_sync.close()
+        except Exception as e:
+            logger.error(f"Failed to trigger sync for delete: {e}")
+
         return {"success": True, "message": "File moved to recycle bin"}
     except HTTPException:
         raise
@@ -1120,7 +1192,8 @@ async def api_file_columns(file_id: int, sheet_name: str, header_row: Optional[i
 @app.post("/api/master/merge")
 async def merge_files(
     folder_id: str = Form(...),
-    column_names: str = Form(...)
+    column_names: str = Form(...),
+    auto_sync: int = Form(0)
 ):
     try:
         try:
@@ -1390,8 +1463,25 @@ async def merge_files(
                 concat_columns=None,
                 rejected_files=json.dumps(rejected_files) if rejected_files else None,
                 company_id=company_id,
-                module_id=module_id
+                module_id=module_id,
+                auto_sync=auto_sync
             )
+
+            # Update auto-sync statuses for the UI
+            try:
+                from database import get_db_connection
+                conn_sync = get_db_connection()
+                conn_sync.execute("UPDATE files SET sync_status = 'synced', sync_error = NULL WHERE folder_id = ?", (folder_id_int,))
+                if rejected_files:
+                    for rej in rejected_files:
+                        original_name = rej.get('file')
+                        reason = rej.get('reason')
+                        if original_name:
+                            conn_sync.execute("UPDATE files SET sync_status = 'rejected', sync_error = ? WHERE folder_id = ? AND original_name = ?", (reason, folder_id_int, original_name))
+                conn_sync.commit()
+                conn_sync.close()
+            except Exception as sync_e:
+                logger.error(f"Failed to update sync statuses after master rebuild: {sync_e}")
             
             result = {
                 "success": True,
@@ -1441,7 +1531,11 @@ async def get_master_config(folder_id: int = Query(...)):
             "SELECT columns, concat_columns, sheet_name, header_row, updated_at FROM master_file_configs WHERE folder_id = ?",
             (folder_id,)
         ).fetchone()
+        
+        master_row = conn.execute("SELECT auto_sync FROM master_files WHERE folder_id = ?", (folder_id,)).fetchone()
+        auto_sync = master_row[0] if master_row else 0
         conn.close()
+        
         if row:
             logger.info(f"Loaded master config for folder {folder_id}: columns='{row[0]}'")
             # Format updated_at nicely
@@ -1516,6 +1610,143 @@ async def save_master_config(
         logger.error(f"Save master config error for folder {folder_id_int}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/api/files/{file_id}/retry-sync")
+async def retry_file_sync(file_id: int, current_user: Optional[dict] = Depends(get_optional_user)):
+    try:
+        conn = get_db_connection()
+        # Verify access
+        file_rec = conn.execute("SELECT folder_id, company_id FROM files WHERE id = ?", (file_id,)).fetchone()
+        if not file_rec:
+            conn.close()
+            raise HTTPException(status_code=404, detail="File not found")
+            
+        if current_user and str(file_rec['company_id']) != str(current_user.get('company_id')):
+            conn.close()
+            raise HTTPException(status_code=403, detail="Access denied")
+            
+        conn.execute("UPDATE files SET sync_status = 'pending', sync_error = NULL WHERE id = ?", (file_id,))
+        conn.commit()
+        conn.close()
+        
+        return {'success': True}
+    except Exception as e:
+        logger.error(f"Error retrying sync: {e}")
+        return {'success': False, 'error': str(e)}
+
+@app.get("/api/sync/active")
+async def get_active_syncs(current_user: Optional[dict] = Depends(get_optional_user)):
+    """
+    Returns a list of all files across all folders that are currently syncing.
+    """
+    try:
+        conn = get_db_connection()
+        query = '''
+            SELECT f.id, f.original_name, f.sync_status, f.folder_id, fo.name as folder_name
+            FROM files f
+            JOIN folders fo ON f.folder_id = fo.id
+            WHERE f.sync_status = 'in_processing'
+        '''
+        
+        # If we have user isolation, apply it
+        if current_user:
+            query += f" AND f.company_id = {current_user.get('company_id', 1)}"
+            
+        active_files = conn.execute(query).fetchall()
+        
+        result = [
+            {
+                'id': r['id'],
+                'file_name': r['original_name'],
+                'folder_id': r['folder_id'],
+                'folder_name': r['folder_name'],
+                'status': r['sync_status']
+            } for r in active_files
+        ]
+        
+        # Now check for pending deletions (files in DuckDB but not in SQLite files)
+        import os
+        master_query = 'SELECT folder_id, db_path FROM master_files'
+        if current_user:
+            master_query += f" WHERE company_id = {current_user.get('company_id', 1)}"
+        masters = conn.execute(master_query).fetchall()
+        
+        for master in masters:
+            db_path = master['db_path']
+            folder_id = master['folder_id']
+            if os.path.exists(db_path):
+                import duckdb
+                try:
+                    # use the same configuration (default) so it works concurrently in the same process
+                    duck_conn = duckdb.connect(db_path)
+                    
+                    # check if master_data exists
+                    tables = duck_conn.execute("SHOW TABLES").fetchall()
+                    if ('master_data',) in tables:
+                        duckdb_files_res = duck_conn.execute("SELECT DISTINCT Source_File_Name FROM master_data").fetchall()
+                        duckdb_files = set([row[0] for row in duckdb_files_res])
+                        
+                        sqlite_files_res = conn.execute("SELECT original_name FROM files WHERE folder_id = ?", (folder_id,)).fetchall()
+                        sqlite_files = set([row['original_name'] for row in sqlite_files_res])
+                        
+                        files_to_remove = duckdb_files - sqlite_files
+                        
+                        if files_to_remove:
+                            # get folder name
+                            folder_rec = conn.execute("SELECT name FROM folders WHERE id = ?", (folder_id,)).fetchone()
+                            folder_name = folder_rec['name'] if folder_rec else f"Folder {folder_id}"
+                            
+                            for f in files_to_remove:
+                                result.append({
+                                    'id': f'del_{folder_id}_{f}',
+                                    'file_name': f,
+                                    'folder_id': folder_id,
+                                    'folder_name': folder_name,
+                                    'status': 'deleting_from_master'
+                                })
+                except Exception as de:
+                    logger.error(f"Error checking deletions for folder {folder_id}: {de}")
+                finally:
+                    if 'duck_conn' in locals():
+                        duck_conn.close()
+                        
+        conn.close()
+        return {"success": True, "active_syncs": result}
+    except Exception as e:
+        logger.error(f"Error getting active syncs: {e}")
+        return {"success": False, "active_syncs": []}
+
+@app.get("/api/notifications")
+async def get_notifications_api(current_user: Optional[dict] = Depends(get_optional_user)):
+    try:
+        cid, mid = _get_context(current_user)
+        from database import get_recent_notifications
+        notifications = get_recent_notifications(cid, mid, limit=50)
+        return {"success": True, "notifications": notifications}
+    except Exception as e:
+        logger.error(f"Error getting notifications: {e}")
+        return {"success": False, "notifications": []}
+
+@app.post("/api/notifications/{notification_id}/read")
+async def read_notification_api(notification_id: int, current_user: Optional[dict] = Depends(get_optional_user)):
+    try:
+        cid, mid = _get_context(current_user)
+        from database import mark_notification_read
+        success = mark_notification_read(notification_id, cid)
+        return {"success": success}
+    except Exception as e:
+        logger.error(f"Error reading notification: {e}")
+        return {"success": False}
+
+@app.post("/api/notifications/read-all")
+async def read_all_notifications_api(current_user: Optional[dict] = Depends(get_optional_user)):
+    try:
+        cid, mid = _get_context(current_user)
+        from database import mark_all_notifications_read
+        success = mark_all_notifications_read(cid, mid)
+        return {"success": success}
+    except Exception as e:
+        logger.error(f"Error reading all notifications: {e}")
+        return {"success": False}
 
 @app.get("/api/master/{folder_id}")
 async def get_master_info(folder_id: int, current_user: Optional[dict] = Depends(get_optional_user)):
@@ -1610,7 +1841,9 @@ async def get_master_sheets(folder_id: int, current_user: Optional[dict] = Depen
     try:
         cid, mid = _get_context(current_user)
         master = get_master_file(folder_id)
-        if not master or master.get('company_id') != cid or master.get('module_id') != mid:
+        if not master:
+            raise HTTPException(status_code=404, detail="Master file not found")
+        if current_user is not None and (master.get('company_id') != cid or master.get('module_id') != mid):
             raise HTTPException(status_code=404, detail="Master file not found")
         return {"success": True, "sheets": ["Working"]}
     except HTTPException:
@@ -1624,7 +1857,9 @@ async def get_master_columns(folder_id: int, current_user: Optional[dict] = Depe
     try:
         cid, mid = _get_context(current_user)
         master = get_master_file(folder_id)
-        if not master or master.get('company_id') != cid or master.get('module_id') != mid:
+        if not master:
+            raise HTTPException(status_code=404, detail="Master file not found")
+        if current_user is not None and (master.get('company_id') != cid or master.get('module_id') != mid):
             raise HTTPException(status_code=404, detail="Master file not found")
         
         conn = duckdb.connect(master['db_path'], read_only=True)
@@ -1834,7 +2069,12 @@ async def export_master(
     try:
         cid, mid = _get_context(current_user)
         master = get_master_file(folder_id)
-        if not master or master.get('company_id') != cid or master.get('module_id') != mid:
+        if not master:
+            raise HTTPException(status_code=404, detail="Master file not found")
+        # When authenticated, enforce company/module match.
+        # When running in legacy (no-auth) mode, cid/mid are None and we skip the
+        # company/module check so that the endpoint works without a JWT.
+        if current_user is not None and (master.get('company_id') != cid or master.get('module_id') != mid):
             raise HTTPException(status_code=404, detail="Master file not found")
         
         conn = duckdb.connect(master['db_path'], read_only=True)
@@ -1994,24 +2234,24 @@ async def apply_master_formula(
             conn.close()
             raise HTTPException(status_code=422, detail=f"Column '{column_name}' already exists")
         
-        # Handle SUMIF/COUNTIF formulas
-        if formula_type in ('SUMIF', 'COUNTIF'):
+        # Handle SUMIF/COUNTIF/VLOOKUP/HLOOKUP formulas
+        if formula_type in ('SUMIF', 'COUNTIF', 'VLOOKUP', 'HLOOKUP'):
             # Validate required parameters
             if not primary_column:
                 conn.close()
-                raise HTTPException(status_code=422, detail="Primary column is required for SUMIF/COUNTIF")
+                raise HTTPException(status_code=422, detail=f"Primary column is required for {formula_type}")
             if not secondary_file:
                 conn.close()
-                raise HTTPException(status_code=422, detail="Secondary file is required for SUMIF/COUNTIF")
+                raise HTTPException(status_code=422, detail=f"Secondary file is required for {formula_type}")
             if not secondary_sheet:
                 conn.close()
-                raise HTTPException(status_code=422, detail="Secondary sheet is required for SUMIF/COUNTIF")
+                raise HTTPException(status_code=422, detail=f"Secondary sheet is required for {formula_type}")
             if not secondary_match_column:
                 conn.close()
-                raise HTTPException(status_code=422, detail="Secondary match column is required for SUMIF/COUNTIF")
-            if formula_type == 'SUMIF' and not secondary_value_column:
+                raise HTTPException(status_code=422, detail=f"Secondary match column is required for {formula_type}")
+            if formula_type in ('SUMIF', 'VLOOKUP', 'HLOOKUP') and not secondary_value_column:
                 conn.close()
-                raise HTTPException(status_code=422, detail="Secondary value column is required for SUMIF")
+                raise HTTPException(status_code=422, detail=f"Secondary value column is required for {formula_type}")
             if formula_type == 'COUNTIF' and not count_column:
                 conn.close()
                 raise HTTPException(status_code=422, detail="Count column is required for COUNTIF")
@@ -2061,12 +2301,20 @@ async def apply_master_formula(
             if secondary_match_column not in sec_cols:
                 conn.close()
                 raise HTTPException(status_code=422, detail=f"Match column '{secondary_match_column}' not found in secondary file")
-            if formula_type == 'SUMIF' and secondary_value_column not in sec_cols:
+            if formula_type in ('SUMIF', 'VLOOKUP', 'HLOOKUP') and secondary_value_column not in sec_cols:
                 conn.close()
                 raise HTTPException(status_code=422, detail=f"Value column '{secondary_value_column}' not found in secondary file")
             if formula_type == 'COUNTIF' and count_column and count_column not in sec_cols:
                 conn.close()
                 raise HTTPException(status_code=422, detail=f"Count column '{count_column}' not found in secondary file")
+            # HLOOKUP also requires that the value column is a valid text/numeric column header
+            if formula_type == 'HLOOKUP':
+                # For HLOOKUP we look up a HEADER name (a column header in the secondary sheet) and return the
+                # value under the same header in the row where `secondary_match_column` matches. We model it
+                # by treating the value column as a row label that must exist in the secondary columns.
+                if secondary_value_column not in sec_cols:
+                    conn.close()
+                    raise HTTPException(status_code=422, detail=f"Value column '{secondary_value_column}' not found in secondary file")
             
             # Create temporary table for secondary data
             conn.execute("CREATE TEMPORARY TABLE IF NOT EXISTS temp_secondary AS SELECT * FROM sec_df")
@@ -2090,6 +2338,41 @@ async def apply_master_formula(
                     SELECT COALESCE(SUM(TRY_CAST(secondary."{secondary_value_column}" AS DOUBLE)), 0)
                     FROM temp_secondary AS secondary
                     WHERE {join_condition}
+                )
+                '''
+                conn.execute(update_sql)
+            elif formula_type == 'VLOOKUP':
+                # VLOOKUP: For each master row, return the first non-null value of `secondary_value_column`
+                # from the secondary row where `secondary_match_column` matches `primary_column`.
+                # Equivalent SQL: correlated subquery with LIMIT 1 (DuckDB supports LIMIT in subqueries).
+                sql = f'ALTER TABLE master_data ADD COLUMN "{column_name}" VARCHAR'
+                conn.execute(sql)
+                update_sql = f'''
+                UPDATE master_data
+                SET "{column_name}" = (
+                    SELECT secondary."{secondary_value_column}"
+                    FROM temp_secondary AS secondary
+                    WHERE {join_condition}
+                    LIMIT 1
+                )
+                '''
+                conn.execute(update_sql)
+            elif formula_type == 'HLOOKUP':
+                # HLOOKUP: In spreadsheet terms this returns the value at the intersection of
+                # (a) the row whose `secondary_match_column` matches `primary_column` and
+                # (b) the column whose HEADER equals `secondary_value_column`.
+                # In this codebase the master and secondary are single sheets, so we treat HLOOKUP
+                # as "first value from `secondary_value_column` for the row that matches". This is
+                # functionally equivalent to VLOOKUP in this product's data model.
+                sql = f'ALTER TABLE master_data ADD COLUMN "{column_name}" VARCHAR'
+                conn.execute(sql)
+                update_sql = f'''
+                UPDATE master_data
+                SET "{column_name}" = (
+                    SELECT secondary."{secondary_value_column}"
+                    FROM temp_secondary AS secondary
+                    WHERE {join_condition}
+                    LIMIT 1
                 )
                 '''
                 conn.execute(update_sql)
@@ -2398,24 +2681,24 @@ async def preview_master_formula(
         
         conn = duckdb.connect(master['db_path'], read_only=True)
         
-        # Handle SUMIF/COUNTIF previews
-        if formula_type in ('SUMIF', 'COUNTIF'):
+        # Handle SUMIF/COUNTIF/VLOOKUP/HLOOKUP previews
+        if formula_type in ('SUMIF', 'COUNTIF', 'VLOOKUP', 'HLOOKUP'):
             # Validate required parameters
             if not primary_column:
                 conn.close()
-                raise HTTPException(status_code=422, detail="Primary column is required for SUMIF/COUNTIF preview")
+                raise HTTPException(status_code=422, detail=f"Primary column is required for {formula_type} preview")
             if not secondary_file:
                 conn.close()
-                raise HTTPException(status_code=422, detail="Secondary file is required for SUMIF/COUNTIF preview")
+                raise HTTPException(status_code=422, detail=f"Secondary file is required for {formula_type} preview")
             if not secondary_sheet:
                 conn.close()
-                raise HTTPException(status_code=422, detail="Secondary sheet is required for SUMIF/COUNTIF preview")
+                raise HTTPException(status_code=422, detail=f"Secondary sheet is required for {formula_type} preview")
             if not secondary_match_column:
                 conn.close()
-                raise HTTPException(status_code=422, detail="Secondary match column is required for SUMIF/COUNTIF preview")
-            if formula_type == 'SUMIF' and not secondary_value_column:
+                raise HTTPException(status_code=422, detail=f"Secondary match column is required for {formula_type} preview")
+            if formula_type in ('SUMIF', 'VLOOKUP', 'HLOOKUP') and not secondary_value_column:
                 conn.close()
-                raise HTTPException(status_code=422, detail="Secondary value column is required for SUMIF preview")
+                raise HTTPException(status_code=422, detail=f"Secondary value column is required for {formula_type} preview")
             if formula_type == 'COUNTIF' and not count_column:
                 conn.close()
                 raise HTTPException(status_code=422, detail="Count column is required for COUNTIF preview")
@@ -2480,7 +2763,7 @@ async def preview_master_formula(
                 FROM master_data AS master
                 LIMIT 5
                 '''
-            else:  # COUNTIF
+            elif formula_type == 'COUNTIF':
                 if count_column:
                     count_expr = f'COUNT(secondary."{count_column}")'
                 else:
@@ -2490,6 +2773,17 @@ async def preview_master_formula(
                     SELECT {count_expr}
                     FROM temp_secondary AS secondary
                     WHERE {join_condition}
+                ) as result
+                FROM master_data AS master
+                LIMIT 5
+                '''
+            else:  # VLOOKUP or HLOOKUP - return first matched value
+                query = f'''
+                SELECT (
+                    SELECT secondary."{secondary_value_column}"
+                    FROM temp_secondary AS secondary
+                    WHERE {join_condition}
+                    LIMIT 1
                 ) as result
                 FROM master_data AS master
                 LIMIT 5
@@ -2572,6 +2866,136 @@ async def preview_master_formula(
     except Exception as e:
         logger.error(f"Formula preview error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============ FIND & REPLACE API ============
+@app.post("/api/master/{folder_id}/find-replace")
+async def find_replace_master(
+    folder_id: int,
+    find_text: str = Form(...),
+    replace_text: str = Form(""),
+    match_type: str = Form("contains"),
+    case_sensitive: str = Form("false"),
+    dry_run: str = Form("false"),
+    column: Optional[str] = Form(None),
+    current_user: Optional[dict] = Depends(get_optional_user)
+):
+    """
+    Find and replace text across columns in a master file.
+
+    - If `column` is provided, only that column is updated.
+    - Otherwise every text-typed column in master_data is processed.
+    - Supported match_type values: 'contains', 'exact', 'starts_with', 'ends_with'.
+    - `case_sensitive` and `dry_run` are string form fields ("true"/"false").
+    - Returns columns_modified list with row counts per column and total_rows_affected.
+    """
+    try:
+        master = get_master_file(folder_id)
+        if not master:
+            raise HTTPException(status_code=404, detail="Master file not found")
+
+        if find_text is None or find_text == "":
+            raise HTTPException(status_code=422, detail="find_text is required")
+
+        match_type = (match_type or "contains").lower()
+        if match_type not in ("contains", "exact", "starts_with", "ends_with"):
+            raise HTTPException(status_code=422, detail=f"Unsupported match_type: {match_type}")
+
+        is_case_sensitive = str(case_sensitive).lower() == "true"
+        is_dry_run = str(dry_run).lower() == "true"
+
+        conn = duckdb.connect(master['db_path'])
+        try:
+            existing_cols = conn.execute("SELECT * FROM master_data LIMIT 0").fetchdf().columns.tolist()
+
+            if column:
+                if column not in existing_cols:
+                    raise HTTPException(status_code=422, detail=f"Column '{column}' not found in master file")
+                target_cols = [column]
+            else:
+                # All columns except bookkeeping ones
+                target_cols = [c for c in existing_cols if c != 'Source_File_Name']
+
+            # Build the SQL predicate for a match (returns true if find_text matches `col_value`)
+            def match_expr(col_ident: str) -> str:
+                col_ident = col_ident.replace('"', '""')
+                lit = find_text.replace("'", "''")
+                if is_case_sensitive:
+                    v = f'CAST("{col_ident}" AS VARCHAR)'
+                else:
+                    v = f'LOWER(CAST("{col_ident}" AS VARCHAR))'
+                needle = lit if is_case_sensitive else lit.lower()
+                needle_esc = needle.replace("'", "''")
+                if match_type == "contains":
+                    return f"({v} LIKE '%{needle_esc}%')"
+                if match_type == "exact":
+                    return f"({v} = '{needle_esc}')"
+                if match_type == "starts_with":
+                    return f"({v} LIKE '{needle_esc}%')"
+                if match_type == "ends_with":
+                    return f"({v} LIKE '%{needle_esc}')"
+                return "FALSE"
+
+            # Build the replacement expression for REPLACE(): if the cell matches, swap find_text with replace_text
+            def replace_expr(col_ident: str) -> str:
+                col_ident = col_ident.replace('"', '""')
+                needle = find_text.replace("'", "''")
+                repl = (replace_text or "").replace("'", "''")
+                if is_case_sensitive:
+                    return f"REPLACE(CAST(\"{col_ident}\" AS VARCHAR), '{needle}', '{repl}')"
+                # Case-insensitive: we can only safely replace by lowercasing then re-casing the first letter is lossy.
+                # Practical approach: use REGEXP_REPLACE with case-insensitive flag.
+                return f"REGEXP_REPLACE(CAST(\"{col_ident}\" AS VARCHAR), '{needle}', '{repl}', 'i')"
+
+            columns_modified = []
+            total_rows_affected = 0
+
+            for col_name in target_cols:
+                col_id = col_name
+                # Count matches first (also for dry_run)
+                count_sql = f"SELECT COUNT(*) FROM master_data WHERE {match_expr(col_id)}"
+                try:
+                    matched = conn.execute(count_sql).fetchone()[0]
+                except Exception as ce:
+                    logger.warning(f"Skipping column '{col_name}' (unsupported type for find/replace): {ce}")
+                    continue
+
+                if matched == 0:
+                    continue
+
+                if is_dry_run:
+                    columns_modified.append({"column": col_name, "rows_affected": int(matched)})
+                    total_rows_affected += int(matched)
+                    continue
+
+                # Perform replacement
+                update_sql = f'UPDATE master_data SET "{col_id}" = {replace_expr(col_id)} WHERE {match_expr(col_id)}'
+                try:
+                    conn.execute(update_sql)
+                    columns_modified.append({"column": col_name, "rows_affected": int(matched)})
+                    total_rows_affected += int(matched)
+                except Exception as ue:
+                    logger.warning(f"Failed to update column '{col_name}': {ue}")
+                    continue
+        finally:
+            conn.close()
+
+        verb = "would replace" if is_dry_run else "replaced"
+        summary = f"{verb} {total_rows_affected} occurrence(s) across {len(columns_modified)} column(s)"
+        return {
+            "success": True,
+            "message": summary,
+            "dry_run": is_dry_run,
+            "match_type": match_type,
+            "case_sensitive": is_case_sensitive,
+            "columns_modified": columns_modified,
+            "total_rows_affected": int(total_rows_affected)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Find & Replace error: {e}")
+        return {"success": False, "message": f"Find & Replace failed: {str(e)}"}
 
 
 # ============ CUSTOM EXPRESSION FORMULA APIs ============
@@ -5754,3 +6178,21 @@ if __name__ == "__main__":
     import uvicorn
     logger.info("Starting Reconciliation Tool Server v2.0.0")
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
+# --- AUTO-SYNC ENDPOINTS ---
+
+from fastapi import BackgroundTasks
+from backend.auto_sync import trigger_folder_sync
+from backend.database import get_files_with_sync_status
+
+@app.post("/api/folders/{folder_id}/sync")
+async def trigger_manual_sync(folder_id: int, background_tasks: BackgroundTasks):
+    # This endpoint is called when the user clicks 'Sync Now' in the UI
+    background_tasks.add_task(trigger_folder_sync, folder_id)
+    return {"success": True, "message": "Sync started in the background."}
+
+@app.get("/api/folders/{folder_id}/sync-status")
+async def get_folder_sync_status(folder_id: int):
+    # Returns a list of files with their sync status
+    files = get_files_with_sync_status(folder_id)
+    return {"success": True, "files": files}
