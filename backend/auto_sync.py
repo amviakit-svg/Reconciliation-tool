@@ -140,10 +140,18 @@ def run_incremental_sync(folder_id: int, force_sync: bool = False):
                 
             logger.info(f"Folder {folder_id} Sync: Removing {len(files_to_remove)} files, Adding {len(files_to_add)} files.")
             
+            company_id = master.get('company_id')
+            module_id = master.get('module_id')
+            
             # 1. REMOVE FILES
             for file_name in files_to_remove:
                 duck_conn.execute("DELETE FROM master_data WHERE Source_File_Name = ?", (file_name,))
                 logger.info(f"Removed {file_name} from master_data.")
+                try:
+                    from backend.database import add_notification
+                    add_notification(company_id, module_id, 'info', f"File '{file_name}' was successfully removed from master data.", f"?folder={folder_id}")
+                except Exception as ne:
+                    pass
                 
             # 2. ADD FILES
             if files_to_add:
@@ -200,7 +208,7 @@ def run_incremental_sync(folder_id: int, force_sync: bool = False):
                         set_file_sync_status(f['id'], 'rejected', str(e))
                         try:
                             from backend.database import add_notification
-                            add_notification(company_id, module_id, 'error', f"File '{f['original_name']}' failed to sync: {str(e)}", f"?folder={folder_id}")
+                            add_notification(company_id, module_id, 'error', f"File '{f['original_name']}' failed to sync: {str(e)}", f"?folder={folder_id}", user_id=f.get('uploaded_by'))
                         except Exception as ne:
                             logger.error(f"Failed to add notification: {ne}")
 
@@ -223,12 +231,17 @@ def run_incremental_sync(folder_id: int, force_sync: bool = False):
                             
                             duck_conn.execute("INSERT INTO master_data SELECT * FROM df")
                             set_file_sync_status(file_id, 'synced', None)
+                            try:
+                                from backend.database import add_notification
+                                add_notification(company_id, module_id, 'success', f"File '{f['original_name']}' was successfully merged.", f"?folder={folder_id}", user_id=f.get('uploaded_by'))
+                            except Exception as ne:
+                                pass
                         except Exception as e:
                             logger.error(f"Failed to INSERT file ID {file_id}: {e}")
                             set_file_sync_status(file_id, 'rejected', str(e))
                             try:
                                 from backend.database import add_notification
-                                add_notification(company_id, module_id, 'error', f"Failed to insert file '{f['original_name']}': {str(e)}", f"?folder={folder_id}")
+                                add_notification(company_id, module_id, 'error', f"Failed to insert file '{f['original_name']}': {str(e)}", f"?folder={folder_id}", user_id=f.get('uploaded_by'))
                             except Exception as ne:
                                 pass
 

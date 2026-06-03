@@ -531,6 +531,38 @@
                         <p class="text-sm text-gray-500">Team Members</p>
                     </div>
                 </div>
+                
+                <!-- Global Activity Log Section -->
+                <div class="card p-6 mt-8">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-lg font-semibold">Global Activity Log</h3>
+                        <div class="flex gap-2">
+                            <input type="number" id="filter-activity-module" placeholder="Module ID" class="px-3 py-1.5 rounded-lg border border-gray-300 text-sm w-32" onchange="loadCompanyActivityLog()">
+                            <input type="number" id="filter-activity-user" placeholder="User ID" class="px-3 py-1.5 rounded-lg border border-gray-300 text-sm w-32" onchange="loadCompanyActivityLog()">
+                            <input type="number" id="filter-activity-role" placeholder="Role ID" class="px-3 py-1.5 rounded-lg border border-gray-300 text-sm w-32" onchange="loadCompanyActivityLog()">
+                            <button onclick="loadCompanyActivityLog()" class="btn-primary px-3 py-1.5 rounded-lg text-sm flex items-center gap-1">
+                                <i class="fas fa-sync-alt"></i> Refresh
+                            </button>
+                        </div>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm">
+                            <thead class="bg-gray-50 text-gray-600">
+                                <tr>
+                                    <th class="px-4 py-3 text-left font-medium">Time</th>
+                                    <th class="px-4 py-3 text-left font-medium">Type</th>
+                                    <th class="px-4 py-3 text-left font-medium">Message</th>
+                                    <th class="px-4 py-3 text-left font-medium">Module</th>
+                                    <th class="px-4 py-3 text-left font-medium">User</th>
+                                    <th class="px-4 py-3 text-left font-medium">Role</th>
+                                </tr>
+                            </thead>
+                            <tbody id="activity-log-table" class="divide-y divide-gray-100">
+                                <tr><td colspan="6" class="px-4 py-3 text-center text-gray-500">Loading activity...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
 
             <div id="page-upload" class="page-section h-full" style="margin: -24px; height: calc(100vh - 64px);">
@@ -1977,8 +2009,51 @@ async function loadCompanyDashboard() {
             const modBadge3 = document.getElementById('module-badge');
             if (modBadge3) modBadge3.textContent = data.modules[0].name;
         }
+        
+        loadCompanyActivityLog();
     } catch (err) {
         showToast(err.message, 'error');
+    }
+}
+
+async function loadCompanyActivityLog() {
+    try {
+        const modId = document.getElementById('filter-activity-module').value;
+        const userId = document.getElementById('filter-activity-user').value;
+        const roleId = document.getElementById('filter-activity-role').value;
+        
+        let url = '/api/company/activity-log?';
+        if (modId) url += `module_id=${modId}&`;
+        if (userId) url += `user_id=${userId}&`;
+        if (roleId) url += `role_id=${roleId}&`;
+        
+        const data = await api(url);
+        const tbody = document.getElementById('activity-log-table');
+        
+        if (!data.logs || data.logs.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" class="px-4 py-3 text-center text-gray-500">No activity logs found.</td></tr>';
+            return;
+        }
+        
+        tbody.innerHTML = data.logs.map(log => {
+            const time = new Date(log.created_at).toLocaleString();
+            let typeBadge = 'badge-blue';
+            if (log.type === 'error') typeBadge = 'badge-red';
+            if (log.type === 'success') typeBadge = 'badge-green';
+            
+            return `
+            <tr class="hover:bg-gray-50">
+                <td class="px-4 py-3 text-gray-600 text-xs">${time}</td>
+                <td class="px-4 py-3"><span class="badge ${typeBadge}">${log.type}</span></td>
+                <td class="px-4 py-3 font-medium text-gray-900">${log.message}</td>
+                <td class="px-4 py-3 text-gray-600">${log.module_name || '-'}</td>
+                <td class="px-4 py-3 text-gray-600">${log.user_name || '-'}</td>
+                <td class="px-4 py-3 text-gray-600">${log.role_name || '-'}</td>
+            </tr>`;
+        }).join('');
+    } catch (err) {
+        console.error("Failed to load activity log:", err);
+        document.getElementById('activity-log-table').innerHTML = '<tr><td colspan="6" class="px-4 py-3 text-center text-red-500">Failed to load logs.</td></tr>';
     }
 }
 

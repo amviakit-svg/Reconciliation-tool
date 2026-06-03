@@ -11,7 +11,7 @@ import shutil
 from datetime import datetime
 from typing import Optional, List
 
-from fastapi import APIRouter, Form, HTTPException, Request, Depends
+from fastapi import APIRouter, Form, HTTPException, Request, Depends, BackgroundTasks
 from fastapi.responses import JSONResponse, FileResponse
 
 from auth import (
@@ -338,6 +338,7 @@ async def get_recycle_bin(
 @router.post("/recycle-bin/restore")
 async def restore_items(
     request: Request,
+    background_tasks: BackgroundTasks,
     bin_ids: str = Form(...),
     current_user: dict = Depends(require_role("admin"))
 ):
@@ -357,6 +358,7 @@ async def restore_items(
     client_ip = request.client.host if request.client else None
     
     restored_count = 0
+    folders_to_sync = set()
     for bin_id in id_list:
         # Verify item belongs to this company (indirectly checked by restore_from_recycle_bin too but good to double check)
         items = get_recycle_bin_items(company_id)
@@ -366,6 +368,22 @@ async def restore_items(
             restored = restore_from_recycle_bin(bin_id)
             if restored:
                 restored_count += 1
+                if restored.get('type') == 'file' and restored.get('folder_id'):
+                    folders_to_sync.add(restored['folder_id'])
+                    
+    # Trigger syncs for affected folders
+    for folder_id in folders_to_sync:
+        try:
+            from database import get_db_connection
+            conn_sync = get_db_connection()
+            master = conn_sync.execute("SELECT 1 FROM master_files WHERE folder_id = ?", (folder_id,)).fetchone()
+            conn_sync.close()
+            if master:
+                from auto_sync import trigger_folder_sync
+                # Trigger incremental sync
+                background_tasks.add_task(trigger_folder_sync, folder_id, False)
+        except Exception as e:
+            logger.error(f"Failed to trigger sync for restored file in folder {folder_id}: {e}")
     
     save_audit_log(
         user_id=current_user['user_id'],
@@ -376,6 +394,13 @@ async def restore_items(
         company_id=company_id,
         ip_address=client_ip
     )
+    
+    if restored_count > 0:
+        try:
+            from database import add_notification
+            add_notification(company_id, current_user.get('module_id'), 'success', f"Restored {restored_count} items from recycle bin", "?page=recycle_bin", user_id=current_user.get('user_id'))
+        except Exception as e:
+            logger.error(f"Failed to add notification for recycle bin restore: {e}")
     
     # Optional: if you cache file data, you might need to clear it, but company_routes doesn't import clear_file_cache. 
     # Usually clients fetch fresh data anyway.

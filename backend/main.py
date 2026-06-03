@@ -847,6 +847,8 @@ async def upload_file(
         sheet_count, row_count, col_count, sheet_names = get_excel_info_fast(file_path)
         ext = os.path.splitext(original_filename)[1].lower()
         
+        user_id = current_user.get("id") if current_user else None
+        
         file_id = save_file_metadata(
             folder_id=folder_id_int,
             original_name=original_filename,
@@ -856,7 +858,8 @@ async def upload_file(
             sheet_names=sheet_names,
             company_id=cid,
             module_id=mid,
-            header_row=header_row_int
+            header_row=header_row_int,
+            uploaded_by=user_id
         )
         
         if not file_id:
@@ -960,6 +963,13 @@ async def api_delete_file(file_id: int, background_tasks: BackgroundTasks, curre
         # Now delete from files table (but KEEP physical file for restore)
         delete_file(file_id)
         clear_file_cache()
+        
+        try:
+            from database import add_notification
+            file_name = file_dict.get('original_name') or file_dict.get('name') or f"File {file_id}"
+            add_notification(cid, mid, 'info', f"File '{file_name}' moved to recycle bin", "?page=recycle_bin", user_id=current_user.get('user_id') if current_user else None)
+        except Exception as e:
+            logger.error(f"Failed to add notification for file delete: {e}")
 
         # Trigger sync for deletions regardless of auto_sync setting
         # to ensure master data does not contain deleted records.
@@ -1655,14 +1665,31 @@ async def get_active_syncs(current_user: Optional[dict] = Depends(get_optional_u
         
         result = [
             {
-                'id': r['id'],
-                'file_name': r['original_name'],
-                'folder_id': r['folder_id'],
-                'folder_name': r['folder_name'],
-                'status': r['sync_status']
-            } for r in active_files
+                "id": f['id'],
+                "file_name": f['original_name'],
+                "status": f['sync_status'],
+                "folder_id": f['folder_id'],
+                "folder_name": f['folder_name']
+            } for f in active_files
         ]
         
+        # Include folders that are actively running in auto_sync queue
+        from backend.auto_sync import SYNC_QUEUES
+        for folder_id, state in SYNC_QUEUES.items():
+            if state.get("is_running"):
+                has_files = any(r['folder_id'] == folder_id for r in result)
+                if not has_files:
+                    folder_rec = conn.execute("SELECT name, company_id FROM folders WHERE id = ?", (folder_id,)).fetchone()
+                    if folder_rec:
+                        if not current_user or str(folder_rec['company_id']) == str(current_user.get('company_id', 1)):
+                            result.append({
+                                "id": f"folder_{folder_id}",
+                                "file_name": "Master Data Update",
+                                "status": "in_processing",
+                                "folder_id": folder_id,
+                                "folder_name": folder_rec['name']
+                            })
+                            
         # Now check for pending deletions (files in DuckDB but not in SQLite files)
         import os
         master_query = 'SELECT folder_id, db_path FROM master_files'
@@ -1719,8 +1746,10 @@ async def get_active_syncs(current_user: Optional[dict] = Depends(get_optional_u
 async def get_notifications_api(current_user: Optional[dict] = Depends(get_optional_user)):
     try:
         cid, mid = _get_context(current_user)
+        user_id = current_user.get("id") if current_user else None
+        role_id = current_user.get("role_id") if current_user else None
         from database import get_recent_notifications
-        notifications = get_recent_notifications(cid, mid, limit=50)
+        notifications = get_recent_notifications(cid, mid, limit=50, user_id=user_id, role_id=role_id)
         return {"success": True, "notifications": notifications}
     except Exception as e:
         logger.error(f"Error getting notifications: {e}")
@@ -1730,8 +1759,9 @@ async def get_notifications_api(current_user: Optional[dict] = Depends(get_optio
 async def read_notification_api(notification_id: int, current_user: Optional[dict] = Depends(get_optional_user)):
     try:
         cid, mid = _get_context(current_user)
+        user_id = current_user.get("id") if current_user else None
         from database import mark_notification_read
-        success = mark_notification_read(notification_id, cid)
+        success = mark_notification_read(notification_id, cid, user_id)
         return {"success": success}
     except Exception as e:
         logger.error(f"Error reading notification: {e}")
@@ -1741,12 +1771,36 @@ async def read_notification_api(notification_id: int, current_user: Optional[dic
 async def read_all_notifications_api(current_user: Optional[dict] = Depends(get_optional_user)):
     try:
         cid, mid = _get_context(current_user)
+        user_id = current_user.get("id") if current_user else None
+        role_id = current_user.get("role_id") if current_user else None
         from database import mark_all_notifications_read
-        success = mark_all_notifications_read(cid, mid)
+        success = mark_all_notifications_read(cid, mid, user_id, role_id)
         return {"success": success}
     except Exception as e:
         logger.error(f"Error reading all notifications: {e}")
         return {"success": False}
+
+@app.get("/api/company/activity-log")
+async def get_company_activity_log_api(
+    module_id: Optional[int] = None,
+    user_id: Optional[int] = None,
+    role_id: Optional[int] = None,
+    current_user: Optional[dict] = Depends(get_optional_user)
+):
+    try:
+        cid, mid = _get_context(current_user)
+        if not cid:
+            return {"success": False, "error": "Company context required"}
+            
+        from database import get_company_activity_log
+        # We allow filtering by module_id, but default to the context one if not provided,
+        # or we just fetch all for the company if they are viewing the company insight page.
+        # Often company insight is across all modules, so if module_id is not specifically passed, we don't enforce mid.
+        logs = get_company_activity_log(cid, module_id=module_id, user_id=user_id, role_id=role_id, limit=200)
+        return {"success": True, "logs": logs}
+    except Exception as e:
+        logger.error(f"Error getting company activity log: {e}")
+        return {"success": False, "logs": []}
 
 @app.get("/api/master/{folder_id}")
 async def get_master_info(folder_id: int, current_user: Optional[dict] = Depends(get_optional_user)):

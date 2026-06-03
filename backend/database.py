@@ -191,6 +191,7 @@ def init_db():
             header_row INTEGER DEFAULT 1,
             sync_status TEXT DEFAULT 'pending',
             sync_error TEXT,
+            uploaded_by INTEGER,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (folder_id) REFERENCES folders (id)
         )
@@ -209,6 +210,12 @@ def init_db():
         try:
             conn.execute("ALTER TABLE files ADD COLUMN sync_status TEXT DEFAULT 'pending'")
             conn.execute("ALTER TABLE files ADD COLUMN sync_error TEXT")
+            conn.commit()
+        except Exception:
+            pass
+    if 'uploaded_by' not in cols:
+        try:
+            conn.execute("ALTER TABLE files ADD COLUMN uploaded_by INTEGER")
             conn.commit()
         except Exception:
             pass
@@ -249,6 +256,8 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             company_id INTEGER,
             module_id INTEGER,
+            user_id INTEGER,
+            role_id INTEGER,
             type TEXT NOT NULL,
             message TEXT NOT NULL,
             link TEXT,
@@ -257,6 +266,17 @@ def init_db():
         )
     ''')
     
+    # Migrate existing notifications table for user_id and role_id
+    cursor = conn.execute("PRAGMA table_info(notifications)")
+    cols = [row['name'] for row in cursor.fetchall()]
+    if 'user_id' not in cols:
+        try:
+            conn.execute("ALTER TABLE notifications ADD COLUMN user_id INTEGER")
+            conn.execute("ALTER TABLE notifications ADD COLUMN role_id INTEGER")
+            conn.commit()
+        except Exception:
+            pass
+            
     # Rules configuration table
     conn.execute('''
         CREATE TABLE IF NOT EXISTS rules (
@@ -445,12 +465,12 @@ def delete_folder(folder_id):
     conn.commit()
     conn.close()
 
-def save_file_metadata(folder_id, original_name, file_path, file_format, size, sheet_names, company_id=None, module_id=None, header_row=1):
+def save_file_metadata(folder_id, original_name, file_path, file_format, size, sheet_names, company_id=None, module_id=None, header_row=1, uploaded_by=None):
     conn = get_db_connection()
     cursor = conn.execute(
-        '''INSERT INTO files (folder_id, name, original_name, file_path, format, size, sheet_names, company_id, module_id, header_row)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-        (folder_id, original_name, original_name, file_path, file_format, size, json.dumps(sheet_names) if sheet_names else None, company_id, module_id, header_row)
+        '''INSERT INTO files (folder_id, name, original_name, file_path, format, size, sheet_names, company_id, module_id, header_row, uploaded_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+        (folder_id, original_name, original_name, file_path, file_format, size, json.dumps(sheet_names) if sheet_names else None, company_id, module_id, header_row, uploaded_by)
     )
     file_id = cursor.lastrowid
     conn.commit()
@@ -756,21 +776,21 @@ def get_company_storage_path(company_id, module_id=None, subfolder=None):
     finally:
         conn.close()
 
-def add_notification(company_id: int, module_id: int, notif_type: str, message: str, link: str = None):
+def add_notification(company_id: int, module_id: int, notif_type: str, message: str, link: str = None, user_id: int = None, role_id: int = None):
     import logging
     logger = logging.getLogger("reconciliation_tool")
     try:
         conn = get_db_connection()
         conn.execute(
-            "INSERT INTO notifications (company_id, module_id, type, message, link) VALUES (?, ?, ?, ?, ?)",
-            (company_id, module_id, notif_type, message, link)
+            "INSERT INTO notifications (company_id, module_id, type, message, link, user_id, role_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (company_id, module_id, notif_type, message, link, user_id, role_id)
         )
         conn.commit()
         conn.close()
     except Exception as e:
         logger.error(f"Error adding notification: {e}")
 
-def get_recent_notifications(company_id: int, module_id: int, limit: int = 50):
+def get_recent_notifications(company_id: int, module_id: int, limit: int = 50, user_id: int = None, role_id: int = None):
     import logging
     logger = logging.getLogger("reconciliation_tool")
     try:
@@ -784,6 +804,14 @@ def get_recent_notifications(company_id: int, module_id: int, limit: int = 50):
             query += " AND module_id = ?"
             params.append(module_id)
             
+        if user_id or role_id:
+            query += " AND (user_id = ? OR role_id = ? OR (user_id IS NULL AND role_id IS NULL))"
+            params.extend([user_id, role_id])
+        else:
+            # If no user_id or role_id provided, assume we want global notifications and maybe all? 
+            # Usually, a specific user queries this. If none, just show where user_id IS NULL
+            query += " AND user_id IS NULL AND role_id IS NULL"
+            
         query += " ORDER BY created_at DESC LIMIT ?"
         params.append(limit)
         
@@ -794,11 +822,47 @@ def get_recent_notifications(company_id: int, module_id: int, limit: int = 50):
         logger.error(f"Error getting notifications: {e}")
         return []
 
-def mark_notification_read(notification_id: int, company_id: int = None):
+def get_company_activity_log(company_id: int, module_id: int = None, user_id: int = None, role_id: int = None, limit: int = 200):
     import logging
     logger = logging.getLogger("reconciliation_tool")
     try:
         conn = get_db_connection()
+        query = """
+            SELECT n.*, u.name as user_name, u.email as user_email, r.name as role_name, m.name as module_name
+            FROM notifications n
+            LEFT JOIN users u ON n.user_id = u.id
+            LEFT JOIN roles r ON n.role_id = r.id
+            LEFT JOIN modules m ON n.module_id = m.id
+            WHERE n.company_id = ?
+        """
+        params = [company_id]
+        
+        if module_id:
+            query += " AND n.module_id = ?"
+            params.append(module_id)
+        if user_id:
+            query += " AND n.user_id = ?"
+            params.append(user_id)
+        if role_id:
+            query += " AND n.role_id = ?"
+            params.append(role_id)
+            
+        query += " ORDER BY n.created_at DESC LIMIT ?"
+        params.append(limit)
+        
+        rows = conn.execute(query, params).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logger.error(f"Error getting company activity log: {e}")
+        return []
+
+def mark_notification_read(notification_id: int, company_id: int = None, user_id: int = None):
+    import logging
+    logger = logging.getLogger("reconciliation_tool")
+    try:
+        conn = get_db_connection()
+        # For simplicity, marking it read sets is_read=1. If it's a global notification, it affects everyone.
         if company_id:
             conn.execute("UPDATE notifications SET is_read = 1 WHERE id = ? AND company_id = ?", (notification_id, company_id))
         else:
@@ -810,7 +874,7 @@ def mark_notification_read(notification_id: int, company_id: int = None):
         logger.error(f"Error marking notification read: {e}")
         return False
 
-def mark_all_notifications_read(company_id: int, module_id: int = None):
+def mark_all_notifications_read(company_id: int, module_id: int = None, user_id: int = None, role_id: int = None):
     import logging
     logger = logging.getLogger("reconciliation_tool")
     try:
@@ -820,6 +884,12 @@ def mark_all_notifications_read(company_id: int, module_id: int = None):
         if module_id:
             query += " AND module_id = ?"
             params.append(module_id)
+            
+        if user_id or role_id:
+            query += " AND (user_id = ? OR role_id = ? OR (user_id IS NULL AND role_id IS NULL))"
+            params.extend([user_id, role_id])
+        else:
+            query += " AND user_id IS NULL AND role_id IS NULL"
             
         conn.execute(query, params)
         conn.commit()
@@ -1370,11 +1440,11 @@ def restore_from_recycle_bin(recycle_id):
     elif entity_type == 'file':
         # Re-create file record (without the physical file - it was moved, not deleted)
         cursor = conn.execute(
-            'INSERT INTO files (folder_id, name, original_name, file_path, format, size, sheet_names, company_id, module_id, header_row) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            'INSERT INTO files (folder_id, name, original_name, file_path, format, size, sheet_names, company_id, module_id, header_row, uploaded_by, sync_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
             (metadata.get('folder_id', 1), metadata.get('name', entity_name), entity_name, original_path, metadata.get('format'), 
-             metadata.get('size'), metadata.get('sheet_names'), company_id, module_id, metadata.get('header_row', 1))
+             metadata.get('size'), metadata.get('sheet_names'), company_id, module_id, metadata.get('header_row', 1), metadata.get('uploaded_by'), 'pending')
         )
-        restored = {'id': cursor.lastrowid, 'name': entity_name, 'type': 'file'}
+        restored = {'id': cursor.lastrowid, 'name': entity_name, 'type': 'file', 'folder_id': metadata.get('folder_id', 1)}
         
     elif entity_type == 'master_file':
         # Re-create master file record
