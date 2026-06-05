@@ -1,15 +1,181 @@
-C:\Users\Nikhil Kumar\.gemini\antigravity\scratch\Reconciliation tool\backend\main.py:202: DeprecationWarning: 
+C:\Users\Nikhil Kumar\.gemini\antigravity\scratch\Reconciliation tool\backend\main.py:210: DeprecationWarning: 
         on_event is deprecated, use lifespan event handlers instead.
 
         Read more about it in the
         [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
         
   @app.on_event("startup")
-2026-05-22 15:14:35,404 [INFO] Starting Reconciliation Tool Server v2.0.0
-INFO:     Started server process [21436]
+2026-06-05 19:37:32,923 [INFO] Starting Reconciliation Tool Server v2.0.0
+INFO:     Started server process [2296]
 INFO:     Waiting for application startup.
-2026-05-22 15:14:35,480 [INFO] Database initialized successfully
+2026-06-05 19:37:32,995 [INFO] Database initialized successfully.
 INFO:     Application startup complete.
-ERROR:    [Errno 10048] error while attempting to bind on address ('0.0.0.0', 8000): [winerror 10048] only one usage of each socket address (protocol/network address/port) is normally permitted
-INFO:     Waiting for application shutdown.
-INFO:     Application shutdown complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+2026-06-05 19:38:22,912 [ERROR] Error getting active syncs: No module named 'backend'
+INFO:     127.0.0.1:54252 - "GET /api/sync/active HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63271 - "GET /api/notifications HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63866 - "GET /api/processed/files HTTP/1.1" 200 OK
+2026-06-05 19:38:36,015 [ERROR] Error getting active syncs: No module named 'backend'
+INFO:     127.0.0.1:57780 - "GET /api/sync/active HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57780 - "GET /api/notifications HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57780 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57780 - "GET /api/auth/verify HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57780 - "GET /api/company/modules HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57780 - "GET /api/company/modules HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63411 - "GET /api/company/dashboard HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63411 - "GET /api/company/activity-log HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63411 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63411 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63411 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63411 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63411 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63411 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63411 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63411 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63411 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63411 - "GET /api/auth/verify HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63411 - "GET /api/company/modules HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63411 - "GET /api/company/modules HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57780 - "GET /api/company/dashboard HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57780 - "GET /api/company/activity-log HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57780 - "GET /index.html?v=1780668523324 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57780 - "GET /api/folders HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63411 - "GET /api/files/1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63411 - "GET /api/folders HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57780 - "GET /api/files/67 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63411 - "GET /api/master/67 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63411 - "GET /api/master/67 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57780 - "GET /api/master/67/source-files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57042 - "GET /api/master/67/preview?limit=10 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63411 - "GET /api/master/67/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57780 - "GET /api/master/67 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57042 - "GET /api/master/67/preview?limit=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50376 - "GET /api/folders HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61834 - "GET /api/files/32 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52708 - "GET /api/master/32 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52708 - "GET /api/master/32 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61834 - "GET /api/master/32/source-files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50376 - "GET /api/master/32/preview?limit=10 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52708 - "GET /api/master/32/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61834 - "GET /api/master/32 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50376 - "GET /api/master/32/preview?limit=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60693 - "GET /index.html?v=1780668546605 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60693 - "GET /api/processed/files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63353 - "GET /api/primary/source-files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58166 - "GET /api/rules/1 HTTP/1.1" 200 OK
+2026-06-05 19:39:07,057 [ERROR] Error getting active syncs: No module named 'backend'
+INFO:     127.0.0.1:60693 - "GET /api/sync/active HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63353 - "GET /api/notifications HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63353 - "GET /api/primary/preview/primary_file.xlsx HTTP/1.1" 200 OK
+2026-06-05 19:39:09,873 [ERROR] Error getting active syncs: No module named 'backend'
+INFO:     127.0.0.1:63353 - "GET /api/sync/active HTTP/1.1" 200 OK
+2026-06-05 19:39:12,879 [ERROR] Error getting active syncs: No module named 'backend'
+INFO:     127.0.0.1:63353 - "GET /api/sync/active HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63353 - "GET /index.html?v=1780668553242 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63353 - "GET /api/dashboard/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51645 - "GET /api/processed/tree HTTP/1.1" 200 OK
+2026-06-05 19:39:14,557 [ERROR] Error getting active syncs: No module named 'backend'
+INFO:     127.0.0.1:50432 - "GET /api/sync/active HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63353 - "GET /api/notifications HTTP/1.1" 200 OK
+2026-06-05 19:39:15,879 [ERROR] Error getting active syncs: No module named 'backend'
+INFO:     127.0.0.1:63353 - "GET /api/sync/active HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63353 - "GET /api/notifications HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63353 - "GET /api/processed/tree HTTP/1.1" 200 OK
+2026-06-05 19:39:17,558 [ERROR] Error getting active syncs: No module named 'backend'
+INFO:     127.0.0.1:63353 - "GET /api/sync/active HTTP/1.1" 200 OK
+2026-06-05 19:39:18,876 [ERROR] Error getting active syncs: No module named 'backend'
+INFO:     127.0.0.1:63353 - "GET /api/sync/active HTTP/1.1" 200 OK
+2026-06-05 19:39:20,564 [ERROR] Error getting active syncs: No module named 'backend'
+INFO:     127.0.0.1:63353 - "GET /api/sync/active HTTP/1.1" 200 OK
+2026-06-05 19:39:21,878 [ERROR] Error getting active syncs: No module named 'backend'
+INFO:     127.0.0.1:63353 - "GET /api/sync/active HTTP/1.1" 200 OK
+2026-06-05 19:39:23,566 [ERROR] Error getting active syncs: No module named 'backend'
+INFO:     127.0.0.1:63353 - "GET /api/sync/active HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63353 - "GET /api/notifications HTTP/1.1" 200 OK
+2026-06-05 19:39:24,878 [ERROR] Error getting active syncs: No module named 'backend'
+INFO:     127.0.0.1:63353 - "GET /api/sync/active HTTP/1.1" 200 OK
+2026-06-05 19:39:26,550 [ERROR] Error getting active syncs: No module named 'backend'
+INFO:     127.0.0.1:63353 - "GET /api/sync/active HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63353 - "GET /api/files/32 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55396 - "GET /api/processed/files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63353 - "GET /api/primary/source-files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55396 - "GET /api/files/32 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63353 - "GET /api/processed/files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55396 - "GET /api/primary/source-files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63353 - "GET /api/notifications HTTP/1.1" 200 OK
+2026-06-05 19:39:27,876 [ERROR] Error getting active syncs: No module named 'backend'
+INFO:     127.0.0.1:63353 - "GET /api/sync/active HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63353 - "GET /api/folders HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55396 - "GET /api/files/67 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65465 - "GET /api/master/67 HTTP/1.1" 200 OK
+2026-06-05 19:39:29,571 [ERROR] Error getting active syncs: No module named 'backend'
+INFO:     127.0.0.1:65465 - "GET /api/sync/active HTTP/1.1" 200 OK
+2026-06-05 19:39:30,882 [ERROR] Error getting active syncs: No module named 'backend'
+INFO:     127.0.0.1:65465 - "GET /api/sync/active HTTP/1.1" 200 OK
+2026-06-05 19:39:32,542 [ERROR] Error getting active syncs: No module named 'backend'
+INFO:     127.0.0.1:65465 - "GET /api/sync/active HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65465 - "POST /api/auth/set-module HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65465 - "GET /api/company/modules HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65465 - "GET /index.html?v=1780668573586 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65465 - "GET /api/folders HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55396 - "GET /api/files/1 HTTP/1.1" 200 OK
+2026-06-05 19:39:33,934 [ERROR] Error getting active syncs: No module named 'backend'
+INFO:     127.0.0.1:55396 - "GET /api/sync/active HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55396 - "GET /api/notifications HTTP/1.1" 200 OK
+2026-06-05 19:39:35,560 [ERROR] Error getting active syncs: No module named 'backend'
+INFO:     127.0.0.1:55396 - "GET /api/sync/active HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55396 - "GET /api/folders HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65465 - "GET /api/files/26 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57532 - "GET /api/master/26 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57532 - "GET /api/processed/files HTTP/1.1" 200 OK
+2026-06-05 19:39:36,883 [ERROR] Error getting active syncs: No module named 'backend'
+INFO:     127.0.0.1:65465 - "GET /api/sync/active HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55396 - "GET /api/notifications HTTP/1.1" 200 OK
+2026-06-05 19:39:38,550 [ERROR] Error getting active syncs: No module named 'backend'
+INFO:     127.0.0.1:55396 - "GET /api/sync/active HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55396 - "GET /api/master/26 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65465 - "GET /api/master/26/source-files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57532 - "GET /api/master/26/preview?limit=10 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51718 - "GET /api/master/26/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59921 - "GET /api/master/26 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65465 - "GET /api/master/26/preview?limit=1 HTTP/1.1" 200 OK
+2026-06-05 19:39:39,873 [ERROR] Error getting active syncs: No module named 'backend'
+INFO:     127.0.0.1:65465 - "GET /api/sync/active HTTP/1.1" 200 OK
+2026-06-05 19:39:41,559 [ERROR] Error getting active syncs: No module named 'backend'
+INFO:     127.0.0.1:65465 - "GET /api/sync/active HTTP/1.1" 200 OK
+2026-06-05 19:39:42,885 [ERROR] Error getting active syncs: No module named 'backend'
+INFO:     127.0.0.1:65465 - "GET /api/sync/active HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65465 - "GET /api/dashboard/stats HTTP/1.1" 200 OK
+2026-06-05 19:39:44,560 [ERROR] Error getting active syncs: No module named 'backend'
+INFO:     127.0.0.1:65465 - "GET /api/sync/active HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65465 - "GET /api/notifications HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65465 - "GET /api/processed/tree HTTP/1.1" 200 OK
+2026-06-05 19:39:45,873 [ERROR] Error getting active syncs: No module named 'backend'
+INFO:     127.0.0.1:65465 - "GET /api/sync/active HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65465 - "GET /api/notifications HTTP/1.1" 200 OK
+2026-06-05 19:39:47,551 [ERROR] Error getting active syncs: No module named 'backend'
+INFO:     127.0.0.1:65465 - "GET /api/sync/active HTTP/1.1" 200 OK
+2026-06-05 19:39:48,880 [ERROR] Error getting active syncs: No module named 'backend'
+INFO:     127.0.0.1:65465 - "GET /api/sync/active HTTP/1.1" 200 OK
+2026-06-05 19:39:50,550 [ERROR] Error getting active syncs: No module named 'backend'
+INFO:     127.0.0.1:65465 - "GET /api/sync/active HTTP/1.1" 200 OK
+2026-06-05 19:39:51,880 [ERROR] Error getting active syncs: No module named 'backend'
+INFO:     127.0.0.1:65465 - "GET /api/sync/active HTTP/1.1" 200 OK
+2026-06-05 19:39:53,553 [ERROR] Error getting active syncs: No module named 'backend'
+INFO:     127.0.0.1:65465 - "GET /api/sync/active HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65465 - "GET /api/notifications HTTP/1.1" 200 OK
+2026-06-05 19:39:54,879 [ERROR] Error getting active syncs: No module named 'backend'
+INFO:     127.0.0.1:65465 - "GET /api/sync/active HTTP/1.1" 200 OK
+2026-06-05 19:39:56,565 [ERROR] Error getting active syncs: No module named 'backend'
+INFO:     127.0.0.1:65465 - "GET /api/sync/active HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65465 - "GET /api/notifications HTTP/1.1" 200 OK
+2026-06-05 19:39:57,886 [ERROR] Error getting active syncs: No module named 'backend'
+INFO:     127.0.0.1:65465 - "GET /api/sync/active HTTP/1.1" 200 OK
+2026-06-05 19:39:59,562 [ERROR] Error getting active syncs: No module named 'backend'
+INFO:     127.0.0.1:65465 - "GET /api/sync/active HTTP/1.1" 200 OK
+2026-06-05 19:40:00,880 [ERROR] Error getting active syncs: No module named 'backend'
+INFO:     127.0.0.1:65465 - "GET /api/sync/active HTTP/1.1" 200 OK
+2026-06-05 19:40:02,553 [ERROR] Error getting active syncs: No module named 'backend'
+INFO:     127.0.0.1:65465 - "GET /api/sync/active HTTP/1.1" 200 OK
+2026-06-05 19:40:03,877 [ERROR] Error getting active syncs: No module named 'backend'
+INFO:     127.0.0.1:65465 - "GET /api/sync/active HTTP/1.1" 200 OK
