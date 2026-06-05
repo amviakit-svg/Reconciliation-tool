@@ -571,6 +571,24 @@
                                                 </div>
                                             </div>
 
+                                            <!-- Activity Steps Viewer (auto-captured from Formula / Find & Replace / Rename / Delete / Filter) -->
+                                            <div id="master-activities-section" class="border border-indigo-200 rounded-lg p-3 bg-indigo-50/40">
+                                                <div class="flex items-center justify-between mb-2">
+                                                    <h5 class="text-sm font-semibold text-indigo-900 flex items-center space-x-1">
+                                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                                                        <span>Activity Steps <span class="text-xs font-normal text-indigo-600">(auto-captured · re-run on auto-sync)</span></span>
+                                                    </h5>
+                                                    <button onclick="loadMasterActivities()" class="text-xs text-indigo-600 hover:text-indigo-800 font-medium" title="Refresh activities">
+                                                        <svg class="w-3.5 h-3.5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                                                        Refresh
+                                                    </button>
+                                                </div>
+                                                <div id="master-activities-empty" class="text-xs text-gray-500 italic py-3 text-center">
+                                                    No activities yet. Use the Formula, Find & Replace, Filter Data, Rename, or Delete buttons above — each action is auto-captured as a step.
+                                                </div>
+                                                <div id="master-activities-list" class="space-y-2 hidden"></div>
+                                            </div>
+
                                             <!-- Data Preview Table -->
                                             <div id="master-preview-container">
                                                 <div class="flex items-center justify-between mb-2">
@@ -681,15 +699,7 @@
                                                 <p class="text-xs text-yellow-700" id="master-validation-text">Calculating...</p>
                                             </div>
 
-                                            <!-- Delete Master File -->
-                                            <div class="flex justify-end pt-2">
-                                                <button onclick="deleteMasterFile()" class="bg-red-600 text-white text-sm px-4 py-2 rounded hover:bg-red-700 transition-colors flex items-center space-x-2" title="Delete master file">
-                                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
-                                                    </svg>
-                                                    <span>Delete Master File</span>
-                                                </button>
-                                            </div>
+                                            <!-- Delete Master File (Removed) -->
                                         </div>
                                     </div>
                                 </div>
@@ -977,42 +987,34 @@
                         <p class="text-gray-600 max-w-md mx-auto">All configured rules will be executed in sequence: Phase 2 → Phase 3 → Phase 4</p>
                     </div>
 
-                    <div class="space-y-4 mb-8">
-                        <div class="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                            <div class="flex items-center space-x-3">
-                                <div class="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
-                                    <span class="text-sm font-bold text-blue-600">1</span>
-                                </div>
-                                <span class="font-medium text-gray-700">Phase 1</span>
+                    <div class="flex items-center justify-between space-x-2 mb-8">
+                        <div class="flex flex-col items-center justify-center p-3 bg-gray-50 rounded-lg flex-1 border border-gray-100">
+                            <div class="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center mb-2">
+                                <span class="text-sm font-bold text-blue-600">1</span>
                             </div>
-                            <span id="process-phase1-status" class="text-sm text-gray-500">Pending</span>
+                            <span class="font-medium text-gray-700 text-sm">Phase 1</span>
+                            <span id="process-phase1-status" class="text-xs text-gray-500 mt-1 text-center min-h-[16px]">Pending</span>
                         </div>
-                        <div class="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                            <div class="flex items-center space-x-3">
-                                <div class="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
-                                    <span class="text-sm font-bold text-blue-600">2</span>
-                                </div>
-                                <span class="font-medium text-gray-700">Phase 2</span>
+                        <div class="flex flex-col items-center justify-center p-3 bg-gray-50 rounded-lg flex-1 border border-gray-100">
+                            <div class="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center mb-2">
+                                <span class="text-sm font-bold text-blue-600">2</span>
                             </div>
-                            <span id="process-phase2-status" class="text-sm text-gray-500">Pending</span>
+                            <span class="font-medium text-gray-700 text-sm">Phase 2</span>
+                            <span id="process-phase2-status" class="text-xs text-gray-500 mt-1 text-center min-h-[16px]">Pending</span>
                         </div>
-                        <div class="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                            <div class="flex items-center space-x-3">
-                                <div class="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
-                                    <span class="text-sm font-bold text-blue-600">3</span>
-                                </div>
-                                <span class="font-medium text-gray-700">Phase 3</span>
+                        <div class="flex flex-col items-center justify-center p-3 bg-gray-50 rounded-lg flex-1 border border-gray-100">
+                            <div class="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center mb-2">
+                                <span class="text-sm font-bold text-blue-600">3</span>
                             </div>
-                            <span id="process-phase3-status" class="text-sm text-gray-500">Pending</span>
+                            <span class="font-medium text-gray-700 text-sm">Phase 3</span>
+                            <span id="process-phase3-status" class="text-xs text-gray-500 mt-1 text-center min-h-[16px]">Pending</span>
                         </div>
-                        <div class="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                            <div class="flex items-center space-x-3">
-                                <div class="w-8 h-8 bg-teal-100 rounded-full flex items-center justify-center">
-                                    <span class="text-sm font-bold text-teal-600">4</span>
-                                </div>
-                                <span class="font-medium text-gray-700">Phase 4</span>
+                        <div class="flex flex-col items-center justify-center p-3 bg-gray-50 rounded-lg flex-1 border border-gray-100">
+                            <div class="w-8 h-8 bg-teal-100 rounded-full flex items-center justify-center mb-2">
+                                <span class="text-sm font-bold text-teal-600">4</span>
                             </div>
-                            <span id="process-phase4-status" class="text-sm text-gray-500">Pending</span>
+                            <span class="font-medium text-gray-700 text-sm">Phase 4</span>
+                            <span id="process-phase4-status" class="text-xs text-gray-500 mt-1 text-center min-h-[16px]">Pending</span>
                         </div>
                     </div>
 
@@ -1510,6 +1512,11 @@
             </div>
         </div>
     </div>
+
+    <!-- ==================== ACTIVITY VIEWER MODAL (unused for now, viewer is in master-view-panel) ==================== -->
+
+    <!-- ==================== ACTIVITIES.JS HELPER LIBRARY ==================== -->
+    <script src="/static/activities.js"></script>
 
     <script>
         // ==================== GLOBAL STATE ====================
@@ -3363,7 +3370,9 @@
                 loadSourceFilesDropdown(),
                 loadMasterPreview(),
                 loadMasterStats(),
-                loadMasterValidation()
+                loadMasterValidation(),
+                // Auto-captured activity steps (Formula / Find & Replace / Rename / Delete / Filter)
+                typeof loadMasterActivities === 'function' ? loadMasterActivities() : Promise.resolve()
             ]);
         }
 
@@ -3527,11 +3536,16 @@
                         <td class="px-3 py-2 text-sm text-gray-900 text-right">${col.non_null_count}</td>
                         <td class="px-3 py-2 text-sm text-gray-900 text-right">${col.null_count}</td>
                         <td class="px-3 py-2 text-sm text-gray-900 text-right">${col.unique_values}</td>
-                        <td class="px-3 py-2 text-center">
-                            ${isProtected ? 
+                        <td class="px-3 py-2 text-center whitespace-nowrap">
+                            ${isProtected ?
                                 '<span class="text-xs text-gray-400" title="Protected column">—</span>' :
-                                `<button onclick="deleteMasterColumn('${col.column.replace(/'/g, "\\'")}')" class="text-red-500 hover:text-red-700 transition-colors" title="Delete column">
-                                    <svg class="w-4 h-4 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                `<button onclick="renameMasterColumn('${col.column.replace(/'/g, "\\'")}')" class="text-blue-500 hover:text-blue-700 transition-colors mr-1 inline-flex items-center" title="Rename column (auto-captured as Activity)">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
+                                    </svg>
+                                </button>
+                                <button onclick="deleteMasterColumn('${col.column.replace(/'/g, "\\'")}')" class="text-red-500 hover:text-red-700 transition-colors inline-flex items-center" title="Delete column (auto-captured as Activity)">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
                                     </svg>
                                 </button>`
@@ -7274,7 +7288,7 @@
             showToast('Download feature coming soon', 'info');
         }
 
-        async function savePhase4Rules() {
+        async function savePhase4Rules(quiet = false) {
             clearFieldErrors();
             
             const cards = document.querySelectorAll('#summary-configs-container > div[id^="summary-card-"]');
@@ -7283,8 +7297,8 @@
             let firstErrorElement = null;
             
             if (cards.length === 0) {
-                showToast('Please add at least one summary configuration to save', 'warning');
-                return;
+                if (!quiet) showToast('Please add at least one summary configuration to save', 'warning');
+                return true;
             }
             
             cards.forEach(card => {
@@ -7336,15 +7350,15 @@
                 } else if (!column) {
                     errorMsg = 'Please go to Phase 1 and select the Primary Column.';
                 }
-                showToast(errorMsg, 'error');
+                if (!quiet) showToast(errorMsg, 'error');
 
                 scrollToFirstError();
-                return;
+                return false;
             }
             
             if (summaries.length === 0) {
-                showToast('No valid summaries to save', 'warning');
-                return;
+                if (!quiet) showToast('No valid summaries to save', 'warning');
+                return true;
             }
             
             isRulesPageLoaded = false; // Force reload on next visit since summaries changed
@@ -7369,7 +7383,8 @@
                 });
             }
             
-            showToast(`${summaries.length} summary(s) saved successfully`, 'success');
+            if (!quiet) showToast(`${summaries.length} summary(s) saved successfully`, 'success');
+            return true;
         }
 
         async function loadSavedPhase4() {
@@ -7902,6 +7917,14 @@
             spinner.classList.remove('hidden');
             resultDiv.classList.add('hidden');
             
+            // Auto-save phase 4 rules before processing starts
+            const saveResult = await savePhase4Rules(true);
+            if (saveResult === false) {
+                btn.disabled = false;
+                spinner.classList.add('hidden');
+                return; // Error shown by savePhase4Rules
+            }
+            
             // Get selected source files
             const selectedSourceFiles = getSelectedSourceFiles();
             if (selectedSourceFiles.length === 0) {
@@ -8273,6 +8296,11 @@
         document.addEventListener('DOMContentLoaded', () => {
             detectIframeMode();
         });
+
+        // ==================== ACTIVITY VIEWER (loaded from frontend/activities.js) ====================
+        // loadMasterActivities(), renderMasterActivities(), toggleActivityEnabled(),
+        // deleteActivity(), testActivity(), openRowFilterModal(), renameMasterColumn()
+        // are defined in /frontend/activities.js which is loaded below.
 
         // ==================== MASTER FILE FORMULA & DELETE ====================
 
@@ -8787,13 +8815,14 @@
                     hideFormulaProgress();
                     document.getElementById('formula-apply-btn').disabled = false;
                     if (data.success) {
-                        showToast(`Formula applied to ${(data.rows_affected || 0).toLocaleString()} rows in '${data.column_name}'`, 'success');
+                        showToast(`Formula applied to ${(data.rows_affected || 0).toLocaleString()} rows in '${data.column_name}' · Activity #${data.activity_id || '?'} saved`, 'success', 4500);
                         closeFormulaModal();
                         await Promise.all([
                             loadMasterPreview(),
                             loadMasterStats(),
                             loadMasterSummary(),
-                            loadMasterValidation()
+                            loadMasterValidation(),
+                            typeof loadMasterActivities === 'function' ? loadMasterActivities() : Promise.resolve()
                         ]);
                     } else {
                         showToast(data.message || 'Apply failed', 'error');
@@ -8832,12 +8861,14 @@
                 hideFormulaProgress();
                 document.getElementById('formula-apply-btn').disabled = false;
                 if (data.success) {
-                    showToast(`Formula applied to ${(data.rows_affected || 0).toLocaleString()} rows in '${data.column_name}'`, 'success');
+                    showToast(`Formula applied to ${(data.rows_affected || 0).toLocaleString()} rows in '${data.column_name}' · Activity #${data.activity_id || '?'} saved`, 'success', 4500);
                     closeFormulaModal();
                     await Promise.all([
                         loadMasterPreview(),
                         loadMasterStats(),
-                        loadMasterSummary()
+                        loadMasterSummary(),
+                        loadMasterValidation(),
+                        typeof loadMasterActivities === 'function' ? loadMasterActivities() : Promise.resolve()
                     ]);
                 } else {
                     showToast(data.message || 'Apply failed', 'error');
@@ -8856,11 +8887,13 @@
                     method: 'DELETE'
                 });
                 if (data.success) {
-                    showToast(`Column '${columnName}' deleted`, 'success');
+                    const actIdPart = data.activity_id ? ` \u00b7 Activity #${data.activity_id} saved` : '';
+                    showToast(`Column '${columnName}' deleted${actIdPart}`, 'success', 4000);
                     await Promise.all([
                         loadMasterPreview(),
                         loadMasterStats(),
-                        loadMasterSummary()
+                        loadMasterSummary(),
+                        typeof loadMasterActivities === 'function' ? loadMasterActivities() : Promise.resolve()
                     ]);
                 } else {
                     showToast(data.message || 'Delete failed', 'error');
@@ -9094,14 +9127,16 @@
                     resultEl.classList.remove('hidden');
 
                     if (!dryRun && data.total_rows_affected > 0) {
-                        showToast(`Replaced ${data.total_rows_affected} occurrences`, 'success');
-                        // Refresh master preview, stats, summary, and validation
+                        const actIdPart = data.activity_id ? ` \u00b7 Activity #${data.activity_id} saved` : '';
+                        showToast(`Replaced ${data.total_rows_affected} occurrences${actIdPart}`, 'success', 4500);
+                        // Refresh master preview, stats, summary, validation, and the activity panel
                         if (masterViewOpen) {
                             await Promise.all([
                                 loadMasterPreview(),
                                 loadMasterStats(),
                                 loadMasterSummary(),
-                                loadMasterValidation()
+                                loadMasterValidation(),
+                                typeof loadMasterActivities === 'function' ? loadMasterActivities() : Promise.resolve()
                             ]);
                         }
                     }

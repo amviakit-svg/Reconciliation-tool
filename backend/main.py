@@ -1482,6 +1482,21 @@ async def merge_files(
                 auto_sync=auto_sync
             )
 
+            # Re-apply any saved activity steps (Formula, Find & Replace, Rename, Delete, Filter)
+            # so they survive master-file recreation. Wrapped in try/except so merge still succeeds
+            # if activity engine itself errors out.
+            try:
+                from backend.auto_sync import apply_activities
+                apply_activities(conn, folder_id_int, company_id, module_id)
+                # Refresh columns after activities may have added/renamed/deleted columns
+                try:
+                    updated_cols_after_activities = conn.execute("SELECT * FROM master_data LIMIT 0").fetchdf().columns.tolist()
+                except Exception:
+                    updated_cols_after_activities = updated_cols_after_reapply
+            except Exception as act_e:
+                logger.warning(f"Failed to re-apply activities after merge: {act_e}")
+                updated_cols_after_activities = updated_cols_after_reapply
+
             # Update auto-sync statuses for the UI
             try:
                 from database import get_db_connection
@@ -2249,8 +2264,14 @@ async def rename_master_column(
 
         # === AUTO-CAPTURE: COLUMN_RENAME ===
         try:
-            cid_rn, mid_rn = _get_context(current_user)
-            _create_activity_from_action(
+            # Fall back to the master file's own company_id/module_id so the
+            # activity row is queryable by the same (cid, mid) the list
+            # endpoint uses. _get_context(current_user) may return (None, None)
+            # in unauthenticated dev mode, which would otherwise make the
+            # activity invisible to the panel.
+            cid_rn = (current_user or {}).get('company_id') or master.get('company_id')
+            mid_rn = (current_user or {}).get('module_id') or master.get('module_id')
+            act_result = _create_activity_from_action(
                 folder_id=folder_id, action_type='COLUMN_RENAME',
                 payload={'from': column_name, 'to': new_name},
                 target_column=new_name,
@@ -2258,14 +2279,17 @@ async def rename_master_column(
                 master_file_id=master.get('id'),
                 user_id=current_user.get('user_id') if current_user else None,
             )
+            new_activity_id = (act_result or {}).get('activity_id')
         except Exception as _e:
             logger.warning(f'Auto-capture COLUMN_RENAME failed: {_e}')
+            new_activity_id = None
 
         return {
             "success": True,
             "message": f"Column '{column_name}' renamed to '{new_name}'",
             "from": column_name,
             "to": new_name,
+            "activity_id": new_activity_id,
             "columns": updated_cols,
         }
     except HTTPException:
@@ -2329,7 +2353,13 @@ async def apply_row_filter(
 
         # AUTO-CAPTURE: ROW_FILTER (persisted activity, not actual filter applied)
         try:
-            cid_rf, mid_rf = _get_context(current_user)
+            # Use master file's own company_id/module_id as a fallback so the
+            # activity is queryable by the same (cid, mid) used by the list
+            # endpoint. _get_context(current_user) can return (None, None) for
+            # unauthenticated dev requests, which previously made the activity
+            # invisible to the activity-steps panel.
+            cid_rf = (current_user or {}).get('company_id') or master.get('company_id')
+            mid_rf = (current_user or {}).get('module_id') or master.get('module_id')
             _create_activity_from_action(
                 folder_id=folder_id, action_type='ROW_FILTER',
                 payload={
@@ -2918,7 +2948,13 @@ async def apply_master_formula(
 
         # === AUTO-CAPTURE: FORMULA_ADD (apply_master_formula) ===
         try:
-            cid_f, mid_f = _get_context(current_user)
+            # Use master file's own company_id/module_id as a fallback so the
+            # activity is queryable by the same (cid, mid) used by the list
+            # endpoint. _get_context(current_user) can return (None, None) for
+            # unauthenticated dev requests, which previously made the activity
+            # invisible to the activity-steps panel.
+            cid_f = (current_user or {}).get('company_id') or master.get('company_id')
+            mid_f = (current_user or {}).get('module_id') or master.get('module_id')
             _create_activity_from_action(
                 folder_id=folder_id, action_type='FORMULA_ADD',
                 payload={
@@ -3002,7 +3038,8 @@ async def delete_master_column(folder_id: int, column_name: str, current_user: O
 
         # === AUTO-CAPTURE: COLUMN_DELETE ===
         try:
-            cid_d, mid_d = _get_context(current_user)
+            cid_d = (current_user or {}).get('company_id') or master.get('company_id')
+            mid_d = (current_user or {}).get('module_id') or master.get('module_id')
             _create_activity_from_action(
                 folder_id=folder_id, action_type='COLUMN_DELETE',
                 payload={'column': column_name}, target_column=column_name,
@@ -3351,7 +3388,13 @@ async def find_replace_master(
 
         # === AUTO-CAPTURE: FIND_REPLACE ===
         try:
-            cid_fr, mid_fr = _get_context(current_user)
+            # Use master file's own company_id/module_id as a fallback so the
+            # activity is queryable by the same (cid, mid) used by the list
+            # endpoint. _get_context(current_user) can return (None, None) for
+            # unauthenticated dev requests, which previously made the activity
+            # invisible to the activity-steps panel.
+            cid_fr = (current_user or {}).get('company_id') or master.get('company_id')
+            mid_fr = (current_user or {}).get('module_id') or master.get('module_id')
             _create_activity_from_action(
                 folder_id=folder_id, action_type='FIND_REPLACE',
                 payload={
@@ -3481,7 +3524,13 @@ async def apply_formula_expression(
 
         # === AUTO-CAPTURE: FORMULA_ADD (apply_formula_expression) ===
         try:
-            cid_e, mid_e = _get_context(current_user)
+            # Use master file's own company_id/module_id as a fallback so the
+            # activity is queryable by the same (cid, mid) used by the list
+            # endpoint. _get_context(current_user) can return (None, None) for
+            # unauthenticated dev requests, which previously made the activity
+            # invisible to the activity-steps panel.
+            cid_e = (current_user or {}).get('company_id') or master.get('company_id')
+            mid_e = (current_user or {}).get('module_id') or master.get('module_id')
             _create_activity_from_action(
                 folder_id=folder_id, action_type='FORMULA_ADD',
                 payload={

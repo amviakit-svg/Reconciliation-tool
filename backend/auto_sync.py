@@ -531,8 +531,17 @@ def _apply_find_replace_activity(duck_conn, act):
                 expr = f"REPLACE(CAST({col_ident} AS VARCHAR), {_sql_escape(find_val)}, {_sql_escape(replace_val)})"
                 duck_conn.execute(f"UPDATE master_data SET {col_ident} = {expr} WHERE {where_clause}")
             else:
-                # Escape regex meta-chars in the find string for case-insensitive literal replace
-                where_clause = f"LOWER(CAST({col_ident} AS VARCHAR)) = LOWER({_sql_escape(find_val)})"
+                # Case-insensitive: build the WHERE clause based on match_type
+                if match_type == 'exact':
+                    where_clause = f"LOWER(CAST({col_ident} AS VARCHAR)) = LOWER({_sql_escape(find_val)})"
+                elif match_type == 'starts_with':
+                    where_clause = f"LOWER(CAST({col_ident} AS VARCHAR)) LIKE LOWER({_sql_escape(find_val + '%')})"
+                elif match_type == 'ends_with':
+                    where_clause = f"LOWER(CAST({col_ident} AS VARCHAR)) LIKE LOWER({_sql_escape('%' + find_val)})"
+                else:
+                    # 'contains' (default) - substring match
+                    where_clause = f"LOWER(CAST({col_ident} AS VARCHAR)) LIKE LOWER({_sql_escape('%' + find_val + '%')})"
+                # Use regexp_replace with 'gi' flags (case-insensitive, global)
                 expr = f"regexp_replace(CAST({col_ident} AS VARCHAR), {_sql_escape(find_val)}, {_sql_escape(replace_val)}, 'gi')"
                 duck_conn.execute(f"UPDATE master_data SET {col_ident} = {expr} WHERE {where_clause}")
 
