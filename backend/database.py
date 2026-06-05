@@ -250,6 +250,31 @@ def init_db():
         except Exception:
             pass
 
+    # Master Activities table (Activity Window - ETL-style persistent steps)
+    # Captures user-applied transformations (formulas, find/replace, column ops)
+    # so they survive across auto-sync cycles when files are added/removed.
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS master_activities (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            master_file_id INTEGER,
+            folder_id INTEGER NOT NULL,
+            company_id INTEGER,
+            module_id INTEGER,
+            step_order INTEGER NOT NULL,
+            activity_type TEXT NOT NULL,
+            target_column TEXT,
+            payload_json TEXT NOT NULL,
+            is_enabled INTEGER DEFAULT 1,
+            validation_status TEXT DEFAULT 'ok',
+            last_error TEXT,
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_applied_at TIMESTAMP,
+            FOREIGN KEY (folder_id) REFERENCES folders (id) ON DELETE CASCADE
+        )
+    ''')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_master_activities_scope ON master_activities(company_id, module_id, folder_id, step_order)')
+
     # Notifications table
     conn.execute('''
         CREATE TABLE IF NOT EXISTS notifications (
@@ -1716,3 +1741,361 @@ def get_files_with_sync_status(folder_id):
         return [dict(row) for row in cursor.fetchall()]
     finally:
         conn.close()
+
+
+# =================== MASTER ACTIVITIES (Activity Window) ===================
+# ETL-style persistent transformation steps applied to the master DuckDB table.
+# Activity types: FORMULA_ADD, FORMULA_UPDATE, FIND_REPLACE, COLUMN_RENAME, COLUMN_DELETE.
+
+def list_master_activities(folder_id, company_id=None, module_id=None, enabled_only=False):
+    """Return all activities for a master file, ordered by step_order, then id."""
+    conn = get_db_connection()
+    try:
+        query = "SELECT * FROM master_activities WHERE folder_id = ?"
+        params = [folder_id]
+        if company_id is not None:
+            query += " AND (company_id = ? OR company_id IS NULL)"
+            params.append(company_id)
+        if module_id is not None:
+            query += " AND (module_id = ? OR module_id IS NULL)"
+            params.append(module_id)
+        if enabled_only:
+            query += " AND is_enabled = 1"
+        query += " ORDER BY step_order ASC, id ASC"
+        rows = conn.execute(query, params).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            # Parse payload_json for convenience
+            try:
+                d['payload'] = json.loads(d.get('payload_json') or '{}')
+            except (json.JSONDecodeError, TypeError):
+                d['payload'] = {}
+            out.append(d)
+        return out
+    finally:
+        conn.close()
+
+
+def get_master_activity(activity_id):
+    conn = get_db_connection()
+    try:
+        row = conn.execute("SELECT * FROM master_activities WHERE id = ?", (activity_id,)).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        try:
+            d['payload'] = json.loads(d.get('payload_json') or '{}')
+        except (json.JSONDecodeError, TypeError):
+            d['payload'] = {}
+        return d
+    finally:
+        conn.close()
+
+
+def create_master_activity(folder_id, activity_type, payload, step_order=None, target_column=None,
+                            company_id=None, module_id=None, master_file_id=None, created_by=None):
+    """Insert a new activity. payload is a dict that will be JSON-encoded."""
+    conn = get_db_connection()
+    try:
+        # Auto-assign step_order if not provided: max + 10
+        if step_order is None:
+            row = conn.execute(
+                "SELECT COALESCE(MAX(step_order), 0) AS m FROM master_activities WHERE folder_id = ?",
+                (folder_id,)
+            ).fetchone()
+            step_order = (row['m'] if row else 0) + 10
+        cur = conn.execute(
+            '''INSERT INTO master_activities
+               (master_file_id, folder_id, company_id, module_id, step_order,
+                activity_type, target_column, payload_json, is_enabled, created_by)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)''',
+            (master_file_id, folder_id, company_id, module_id, step_order,
+             activity_type, target_column, json.dumps(payload) if payload else '{}', created_by)
+        )
+        activity_id = cur.lastrowid
+        conn.commit()
+        return activity_id
+    finally:
+        conn.close()
+
+
+def find_activity_for_action(folder_id, action_type, target_column=None, payload_signature=None):
+    """
+    Find an existing activity that matches a user action. Used for dedup when the
+    user applies the same formula/find-replace twice.
+
+    Matching rules:
+      - COLUMN_RENAME / COLUMN_DELETE: match by (activity_type, target_column)
+      - FIND_REPLACE:                   match by (activity_type, payload signature)
+      - FORMULA_ADD:                    match by (activity_type, target_column)
+      - ROW_FILTER:                     match by (activity_type, payload signature)
+
+    Returns the activity dict (with parsed payload) or None.
+    """
+    conn = get_db_connection()
+    try:
+        if target_column is not None:
+            row = conn.execute(
+                """SELECT * FROM master_activities
+                   WHERE folder_id = ? AND activity_type = ?
+                     AND target_column = ? AND is_enabled = 1
+                   ORDER BY id ASC LIMIT 1""",
+                (folder_id, action_type, target_column)
+            ).fetchone()
+        elif payload_signature is not None:
+            # Use a LIKE on the JSON to find by signature
+            row = conn.execute(
+                """SELECT * FROM master_activities
+                   WHERE folder_id = ? AND activity_type = ? AND is_enabled = 1
+                     AND payload_json LIKE ?
+                   ORDER BY id ASC LIMIT 1""",
+                (folder_id, action_type, f'%{payload_signature}%')
+            ).fetchone()
+        else:
+            return None
+        if not row:
+            return None
+        d = dict(row)
+        try:
+            d['payload'] = json.loads(d.get('payload_json') or '{}')
+        except (json.JSONDecodeError, TypeError):
+            d['payload'] = {}
+        return d
+    finally:
+        conn.close()
+
+
+def create_activity_from_action(folder_id, action_type, payload, target_column=None,
+                                 company_id=None, module_id=None, master_file_id=None,
+                                 user_id=None, dedup=True):
+    """
+    Auto-capture a user action as an Activity step. This is the SINGLE entry point
+    called by every apply endpoint (formula, find-replace, delete-column, rename, filter).
+
+    Behaviour:
+      - If `dedup=True` and an existing enabled activity matches this action
+        (by target_column or payload signature), UPDATE the existing activity's
+        payload in place and return its id. This prevents duplicates when the
+        user re-applies the same transformation.
+      - Otherwise, INSERT a new activity with auto-assigned step_order.
+
+    Returns dict: { activity_id, deduplicated: bool }
+    """
+    import logging
+    logger = logging.getLogger("reconciliation_tool")
+    if payload is None:
+        payload = {}
+
+    # Derive a stable signature for payload-based matching (FIND_REPLACE, ROW_FILTER)
+    sig = None
+    if action_type in ('FIND_REPLACE', 'ROW_FILTER'):
+        # Use the user-facing inputs as the signature
+        if action_type == 'FIND_REPLACE':
+            sig = f'"find": {json.dumps(payload.get("find", ""))!r}'
+        elif action_type == 'ROW_FILTER':
+            sig = f'"filter": {json.dumps(payload, sort_keys=True)!r}'
+
+    existing = None
+    if dedup:
+        try:
+            existing = find_activity_for_action(
+                folder_id, action_type,
+                target_column=target_column,
+                payload_signature=sig
+            )
+        except Exception as e:
+            logger.warning(f"dedup lookup failed: {e}")
+
+    if existing:
+        # Update payload in place
+        update_master_activity(existing['id'], payload=payload)
+        return {"activity_id": existing['id'], "deduplicated": True}
+
+    # No match — create new
+    try:
+        activity_id = create_master_activity(
+            folder_id=folder_id,
+            activity_type=action_type,
+            payload=payload,
+            target_column=target_column,
+            company_id=company_id,
+            module_id=module_id,
+            master_file_id=master_file_id,
+            created_by=user_id,
+        )
+        return {"activity_id": activity_id, "deduplicated": False}
+    except Exception as e:
+        logger.error(f"create_activity_from_action failed: {e}")
+        return {"activity_id": None, "deduplicated": False, "error": str(e)}
+
+
+def update_master_activity(activity_id, **kwargs):
+    """Update an activity. Allowed: payload, step_order, is_enabled, target_column, validation_status, last_error, last_applied_at."""
+    allowed = {'payload', 'step_order', 'is_enabled', 'target_column',
+               'validation_status', 'last_error', 'last_applied_at'}
+    fields = {}
+    for k, v in kwargs.items():
+        if k not in allowed:
+            continue
+        if k == 'payload' and not isinstance(v, str):
+            fields['payload_json'] = json.dumps(v) if v else '{}'
+        else:
+            fields[k] = v
+    if not fields:
+        return
+    conn = get_db_connection()
+    try:
+        set_clause = ', '.join(f"{k} = ?" for k in fields.keys())
+        values = list(fields.values()) + [activity_id]
+        conn.execute(f"UPDATE master_activities SET {set_clause} WHERE id = ?", values)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def delete_master_activity(activity_id):
+    conn = get_db_connection()
+    try:
+        conn.execute("DELETE FROM master_activities WHERE id = ?", (activity_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def reorder_master_activities(folder_id, ordered_ids):
+    """Bulk update step_order for the given list of activity IDs (in order)."""
+    conn = get_db_connection()
+    try:
+        for idx, aid in enumerate(ordered_ids):
+            new_order = (idx + 1) * 10
+            conn.execute(
+                "UPDATE master_activities SET step_order = ? WHERE id = ? AND folder_id = ?",
+                (new_order, aid, folder_id)
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def mark_activity_applied(activity_id, status='ok', error=None):
+    """Update last_applied_at + validation_status + last_error after auto-sync."""
+    from datetime import datetime
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            "UPDATE master_activities SET last_applied_at = ?, validation_status = ?, last_error = ? WHERE id = ?",
+            (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), status, error, activity_id)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def activity_already_migrated(activity_id_legacy):
+    """Check whether a legacy master_formulas entry has already been migrated to master_activities.
+    Used by the one-time migration to avoid duplicates."""
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM master_activities WHERE payload_json LIKE ? LIMIT 1",
+            (f'%"legacy_formula_id": {int(activity_id_legacy)}%',)
+        ).fetchone()
+        return row is not None
+    finally:
+        conn.close()
+
+
+def migrate_legacy_master_formulas():
+    """One-time migration: copy each row's master_files.formulas JSON entries into
+    master_activities so they are re-applied by the new apply_activities() engine.
+    Idempotent: skips entries that have already been migrated.
+
+    Returns dict: {migrated_count, skipped_count, folders_scanned}
+    """
+    import logging
+    logger = logging.getLogger("reconciliation_tool")
+    migrated = 0
+    skipped = 0
+    folders_scanned = 0
+
+    conn = get_db_connection()
+    try:
+        # Iterate over every master_files row
+        masters = conn.execute("SELECT id, folder_id, company_id, module_id, formulas FROM master_files").fetchall()
+        for m in masters:
+            folders_scanned += 1
+            master_id = m['id']
+            folder_id = m['folder_id']
+            company_id = m['company_id']
+            module_id = m['module_id']
+            formulas_json = m['formulas']
+            if not formulas_json:
+                continue
+            try:
+                formulas_list = json.loads(formulas_json)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if not isinstance(formulas_list, list):
+                continue
+
+            for idx, f in enumerate(formulas_list):
+                if not isinstance(f, dict):
+                    continue
+                # Skip if we've already migrated this exact entry
+                legacy_id = f.get('id')
+                if legacy_id is not None and activity_already_migrated(legacy_id):
+                    skipped += 1
+                    continue
+
+                ft = (f.get('formula_type') or f.get('type') or 'EXPRESSION').upper()
+                target_column = f.get('column_name') or f.get('output_column') or f.get('target_column')
+
+                if ft in ('FORMULA_ADD', 'EXPRESSION', 'SUMIF', 'COUNTIF', 'VLOOKUP'):
+                    activity_type = 'FORMULA_ADD'
+                    payload = {
+                        'expression': f.get('expression') or f.get('formula') or '',
+                        'output_column': target_column,
+                        'data_type': f.get('data_type', 'DOUBLE'),
+                        # Preserve original fields so reapply_formulas() can still work
+                        'formula_type': ft,
+                        'primary_column': f.get('primary_column'),
+                        'secondary_file': f.get('secondary_file'),
+                        'secondary_sheet': f.get('secondary_sheet'),
+                        'secondary_match_column': f.get('secondary_match_column'),
+                        'secondary_value_column': f.get('secondary_value_column'),
+                        'legacy_formula_id': legacy_id,
+                    }
+                else:
+                    activity_type = 'FORMULA_ADD'
+                    payload = {
+                        'expression': json.dumps(f),
+                        'output_column': target_column,
+                        'data_type': 'DOUBLE',
+                        'formula_type': ft,
+                        'legacy_formula_id': legacy_id,
+                    }
+
+                # step_order: keep relative ordering, multiply by 10 to leave room
+                step_order = (idx + 1) * 10
+                try:
+                    create_master_activity(
+                        folder_id=folder_id,
+                        activity_type=activity_type,
+                        payload=payload,
+                        step_order=step_order,
+                        target_column=target_column,
+                        company_id=company_id,
+                        module_id=module_id,
+                        master_file_id=master_id,
+                    )
+                    migrated += 1
+                except Exception as e:
+                    logger.warning(f"Migration: failed to migrate formula for folder={folder_id}: {e}")
+                    skipped += 1
+    finally:
+        conn.close()
+
+    if migrated:
+        logger.info(f"Legacy migration: migrated {migrated} formulas to master_activities (skipped {skipped})")
+    return {"migrated": migrated, "skipped": skipped, "folders_scanned": folders_scanned}

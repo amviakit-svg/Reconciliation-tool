@@ -105,6 +105,39 @@
 <body class="bg-gray-50 min-h-screen">
 
     <!-- Toast Container -->
+    
+    <!-- Validation Warning Modal -->
+    <div id="validation-warning-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full hidden z-50">
+        <div class="relative top-20 mx-auto p-5 border w-11/12 md:w-3/4 lg:w-1/2 shadow-lg rounded-md bg-white">
+            <div class="mt-3 text-center">
+                <div class="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-yellow-100">
+                    <svg class="h-6 w-6 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                    </svg>
+                </div>
+                <h3 class="text-lg leading-6 font-medium text-gray-900 mt-4">Validation Warning</h3>
+                <div class="mt-2 px-7 py-3">
+                    <p class="text-sm text-gray-500 text-left mb-2">
+                        The following columns are required by your Phase 4 Summary Rules, but they are NOT being generated in earlier phases (Phase 1, 2, or 3):
+                    </p>
+                    <ul id="validation-missing-columns" class="text-sm text-red-600 text-left list-disc list-inside mb-4 font-semibold">
+                    </ul>
+                    <p class="text-sm text-gray-500 text-left">
+                        <strong>Solution:</strong> Please go to Phase 2 (Matching & Mapping) or Phase 3 (Remarks) and add rules to generate these columns.
+                    </p>
+                </div>
+                <div class="items-center px-4 py-3 sm:flex sm:flex-row-reverse">
+                    <button id="validation-force-btn" class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-red-600 text-base font-medium text-white hover:bg-red-700 focus:outline-none sm:ml-3 sm:w-auto sm:text-sm">
+                        Process Anyway
+                    </button>
+                    <button id="validation-cancel-btn" class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm">
+                        Cancel and Fix
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
     <div id="toast-container" class="fixed top-4 right-4 z-50 space-y-2"></div>
 
     <!-- Header -->
@@ -155,6 +188,39 @@
     </div>
 
     <!-- Global Toast Container -->
+    
+    <!-- Validation Warning Modal -->
+    <div id="validation-warning-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full hidden z-50">
+        <div class="relative top-20 mx-auto p-5 border w-11/12 md:w-3/4 lg:w-1/2 shadow-lg rounded-md bg-white">
+            <div class="mt-3 text-center">
+                <div class="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-yellow-100">
+                    <svg class="h-6 w-6 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                    </svg>
+                </div>
+                <h3 class="text-lg leading-6 font-medium text-gray-900 mt-4">Validation Warning</h3>
+                <div class="mt-2 px-7 py-3">
+                    <p class="text-sm text-gray-500 text-left mb-2">
+                        The following columns are required by your Phase 4 Summary Rules, but they are NOT being generated in earlier phases (Phase 1, 2, or 3):
+                    </p>
+                    <ul id="validation-missing-columns" class="text-sm text-red-600 text-left list-disc list-inside mb-4 font-semibold">
+                    </ul>
+                    <p class="text-sm text-gray-500 text-left">
+                        <strong>Solution:</strong> Please go to Phase 2 (Matching & Mapping) or Phase 3 (Remarks) and add rules to generate these columns.
+                    </p>
+                </div>
+                <div class="items-center px-4 py-3 sm:flex sm:flex-row-reverse">
+                    <button id="validation-force-btn" class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-red-600 text-base font-medium text-white hover:bg-red-700 focus:outline-none sm:ml-3 sm:w-auto sm:text-sm">
+                        Process Anyway
+                    </button>
+                    <button id="validation-cancel-btn" class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm">
+                        Cancel and Fix
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
     <div id="toast-container" class="fixed bottom-5 right-5 z-[110] flex flex-col space-y-3 pointer-events-none"></div>
 
     <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -3985,6 +4051,7 @@
         }
 
         async function loadSavedPhase2() {
+            await getPhase1Columns();
             const tbody = document.getElementById('matching-rules-body');
             
             // Always clear tbody first - remove any stuck spinner
@@ -4080,9 +4147,12 @@
                     createdColumns.push(rule.column_name);
                 }
             }
-            createdColumns = ['Unique_ID', 'Source_File_Name', 'Order ID', 'Sales Amount', ...createdColumns];
+            // DYNAMIC: use GLOBAL_PHASE1_COLUMNS (populated by getPhase1Columns() at the top of this function)
+            // so that any user-added Phase 1 "Additional Fields" (e.g. "Sales Amount 2", "Total Tax")
+            // are included in calculation rule dropdowns.
+            createdColumns = [...GLOBAL_PHASE1_COLUMNS, ...createdColumns];
             createdColumns = [...new Set(createdColumns)];
-            
+
             // Step 2: Create all rows with sequential IDs
             const rowIds = [];
             for (const rule of rulesList) {
@@ -4419,16 +4489,17 @@
                     pCol.innerHTML = '<option value="">Column</option>' + 
                         colData[pColKey].columns.map(c => `<option value="${c}" ${String(c) === String(rule.primary_column) ? 'selected' : ''}>${c}</option>`).join('');
                 } else if (rule.primary_file?.startsWith('primary_')) {
-                    const pSelected = rule.primary_column === 'Order ID' ? 'selected' : '';
-                    const uSelected = rule.primary_column === 'Unique_ID' ? 'selected' : '';
-                    const sSelected = rule.primary_column === 'Source_File_Name' ? 'selected' : '';
-                    const salesSelected = rule.primary_column === 'Sales Amount' ? 'selected' : '';
+                    // DYNAMIC: pull every Phase 1 column (including user-added "Additional Fields")
+                    // via getPhase1Columns() rather than a hardcoded 4-column list.
+                    const p1Cols = await getPhase1Columns();
                     const label = window.primaryValueColumnName || 'Order ID';
-                    pCol.innerHTML = '<option value="">Column</option>' +
-                        '<option value="Unique_ID"' + (uSelected ? ' selected' : '') + '>Unique_ID</option>' +
-                        '<option value="Source_File_Name"' + (sSelected ? ' selected' : '') + '>Source_File_Name</option>' +
-                        '<option value="Order ID"' + (pSelected ? ' selected' : '') + `>${label}</option>` +
-                        '<option value="Sales Amount"' + (salesSelected ? ' selected' : '') + '>Sales Amount</option>';
+                    const opts = ['<option value="">Column</option>'];
+                    p1Cols.forEach(c => {
+                        const sel = (String(c) === String(rule.primary_column)) ? ' selected' : '';
+                        const dispLabel = c === 'Order ID' ? label : c;
+                        opts.push(`<option value="${c}"${sel}>${dispLabel}</option>`);
+                    });
+                    pCol.innerHTML = opts.join('');
                 }
                 
                 // Secondary
@@ -4449,16 +4520,17 @@
                     sCol.innerHTML = '<option value="">Column</option>' + 
                         colData[sColKey].columns.map(c => `<option value="${c}" ${String(c) === String(rule.secondary_column) ? 'selected' : ''}>${c}</option>`).join('');
                 } else if (rule.secondary_file?.startsWith('primary_')) {
-                    const pSelected = rule.secondary_column === 'Order ID' ? 'selected' : '';
-                    const uSelected = rule.secondary_column === 'Unique_ID' ? 'selected' : '';
-                    const sSelected = rule.secondary_column === 'Source_File_Name' ? 'selected' : '';
-                    const salesSelected = rule.secondary_column === 'Sales Amount' ? 'selected' : '';
+                    // DYNAMIC: pull every Phase 1 column (including user-added "Additional Fields")
+                    // via getPhase1Columns() rather than a hardcoded 4-column list.
+                    const p1Cols = await getPhase1Columns();
                     const label = window.primaryValueColumnName || 'Order ID';
-                    sCol.innerHTML = '<option value="">Match Column</option>' +
-                        '<option value="Unique_ID"' + (uSelected ? ' selected' : '') + '>Unique_ID</option>' +
-                        '<option value="Source_File_Name"' + (sSelected ? ' selected' : '') + '>Source_File_Name</option>' +
-                        '<option value="Order ID"' + (pSelected ? ' selected' : '') + `>${label}</option>` +
-                        '<option value="Sales Amount"' + (salesSelected ? ' selected' : '') + '>Sales Amount</option>';
+                    const opts = ['<option value="">Match Column</option>'];
+                    p1Cols.forEach(c => {
+                        const sel = (String(c) === String(rule.secondary_column)) ? ' selected' : '';
+                        const dispLabel = c === 'Order ID' ? label : c;
+                        opts.push(`<option value="${c}"${sel}>${dispLabel}</option>`);
+                    });
+                    sCol.innerHTML = opts.join('');
                 }
                 
                 // Extract
@@ -4479,16 +4551,17 @@
                     eCol.innerHTML = '<option value="">Column</option>' + 
                         colData[eColKey].columns.map(c => `<option value="${c}" ${String(c) === String(rule.extract_column) ? 'selected' : ''}>${c}</option>`).join('');
                 } else if (rule.extract_file?.startsWith('primary_')) {
-                    const pSelected = rule.extract_column === 'Order ID' ? 'selected' : '';
-                    const uSelected = rule.extract_column === 'Unique_ID' ? 'selected' : '';
-                    const sSelected = rule.extract_column === 'Source_File_Name' ? 'selected' : '';
-                    const salesSelected = rule.extract_column === 'Sales Amount' ? 'selected' : '';
+                    // DYNAMIC: pull every Phase 1 column (including user-added "Additional Fields")
+                    // via getPhase1Columns() rather than a hardcoded 4-column list.
+                    const p1Cols = await getPhase1Columns();
                     const label = window.primaryValueColumnName || 'Order ID';
-                    eCol.innerHTML = '<option value="">Extract Column</option>' +
-                        '<option value="Unique_ID"' + (uSelected ? ' selected' : '') + '>Unique_ID</option>' +
-                        '<option value="Source_File_Name"' + (sSelected ? ' selected' : '') + '>Source_File_Name</option>' +
-                        '<option value="Order ID"' + (pSelected ? ' selected' : '') + `>${label}</option>` +
-                        '<option value="Sales Amount"' + (salesSelected ? ' selected' : '') + '>Sales Amount</option>';
+                    const opts = ['<option value="">Extract Column</option>'];
+                    p1Cols.forEach(c => {
+                        const sel = (String(c) === String(rule.extract_column)) ? ' selected' : '';
+                        const dispLabel = c === 'Order ID' ? label : c;
+                        opts.push(`<option value="${c}"${sel}>${dispLabel}</option>`);
+                    });
+                    eCol.innerHTML = opts.join('');
                 }
             }
             
@@ -5072,8 +5145,10 @@
                 }
             });
             
-            // Also add primary data columns
-            createdColumns = ['Unique_ID', 'Source_File_Name', 'Order ID', 'Sales Amount', ...createdColumns];
+            // DYNAMIC: use GLOBAL_PHASE1_COLUMNS (populated by getPhase1Columns() at the top of this function)
+            // so that any user-added Phase 1 "Additional Fields" (e.g. "Sales Amount 2", "Total Tax")
+            // are included in calculation rule dropdowns.
+            createdColumns = [...GLOBAL_PHASE1_COLUMNS, ...createdColumns];
             // Remove duplicates
             createdColumns = [...new Set(createdColumns)];
             
@@ -5209,7 +5284,10 @@
                     createdColumns.push(colNameInput.value.trim());
                 }
             });
-            createdColumns = ['Unique_ID', 'Source_File_Name', 'Order ID', 'Sales Amount', ...createdColumns];
+            // DYNAMIC: use GLOBAL_PHASE1_COLUMNS (populated by getPhase1Columns() at the top of this function)
+            // so that any user-added Phase 1 "Additional Fields" (e.g. "Sales Amount 2", "Total Tax")
+            // are included in calculation rule dropdowns.
+            createdColumns = [...GLOBAL_PHASE1_COLUMNS, ...createdColumns];
             createdColumns = [...new Set(createdColumns)];
             
             // Prevent circular dependency: exclude the column name of the calculation rule
@@ -5278,9 +5356,10 @@
                 panel.id = `condition-panel-${rowId}`;
                 panel.className = 'condition-panel bg-purple-50 border-b border-purple-200';
                 
-                // Get available columns for condition dropdowns
+            // DYNAMIC: prepend GLOBAL_PHASE1_COLUMNS so user-added Phase 1 fields
+            // (e.g. "Sales Amount 2", "Total Tax") are available in dropdowns.
                 const allRows = document.querySelectorAll('#matching-rules-body tr');
-                let availableCols = ['Unique_ID', 'Source_File_Name', 'Order ID', 'Sales Amount'];
+                let availableCols = [...GLOBAL_PHASE1_COLUMNS];
                 allRows.forEach(r => {
                     const cn = r.querySelector('.rule-column-name');
                     if (cn && cn.value.trim()) availableCols.push(cn.value.trim());
@@ -5416,8 +5495,10 @@
             const list = document.getElementById(`conditions-list-${rowId}`);
             const idx = list.querySelectorAll('.condition-row-item').length;
             
+            // DYNAMIC: prepend GLOBAL_PHASE1_COLUMNS so user-added Phase 1 fields
+            // (e.g. "Sales Amount 2", "Total Tax") are available in dropdowns.
             const allRows = document.querySelectorAll('#matching-rules-body tr');
-            let availableCols = ['Unique_ID', 'Source_File_Name', 'Order ID', 'Sales Amount'];
+            let availableCols = [...GLOBAL_PHASE1_COLUMNS];
             allRows.forEach(r => {
                 const cn = r.querySelector('.rule-column-name');
                 if (cn && cn.value.trim()) availableCols.push(cn.value.trim());
@@ -5427,7 +5508,7 @@
                 const label = (c === 'Order ID') ? (window.primaryValueColumnName || 'Order ID') : c;
                 return `<option value="${c}">${label}</option>`;
             }).join('');
-            
+
             const div = document.createElement('div');
             div.innerHTML = buildConditionRow(rowId, idx, colOptions);
             list.appendChild(div.firstElementChild);
@@ -5490,9 +5571,10 @@
             const existing = document.getElementById(`condition-panel-${rowId}`);
             if (existing) existing.remove();
             
-            // Get available columns for condition dropdowns
+            // DYNAMIC: prepend GLOBAL_PHASE1_COLUMNS so user-added Phase 1 fields
+            // (e.g. "Sales Amount 2", "Total Tax") are available in dropdowns.
             const allRows = document.querySelectorAll('#matching-rules-body tr');
-            let availableCols = ['Unique_ID', 'Source_File_Name', 'Order ID', 'Sales Amount'];
+            let availableCols = [...GLOBAL_PHASE1_COLUMNS];
             allRows.forEach(r => {
                 const cn = r.querySelector('.rule-column-name');
                 if (cn && cn.value.trim()) availableCols.push(cn.value.trim());
@@ -5502,7 +5584,7 @@
                 const label = (c === 'Order ID') ? (window.primaryValueColumnName || 'Order ID') : c;
                 return `<option value="${c}">${label}</option>`;
             }).join('');
-            
+
             // Build condition rows from saved data
             let conditionsHtml = '';
             if (colCondData.conditions && colCondData.conditions.length > 0) {
@@ -5852,6 +5934,31 @@
             }
         }
 
+        let GLOBAL_PHASE1_COLUMNS = ['Unique_ID', 'Source_File_Name', 'Order ID', 'Sales Amount'];
+        async function getPhase1Columns() {
+            let cols = ['Unique_ID', 'Source_File_Name'];
+            try {
+                const rulesData = await apiCall('/api/rules/1');
+                if (rulesData.success && rulesData.rules && rulesData.rules.length > 0) {
+                    let configRaw = rulesData.rules[rulesData.rules.length - 1].config;
+                    const p1Config = typeof configRaw === 'string' ? JSON.parse(configRaw) : configRaw;
+                    cols.push('Order ID', 'Sales Amount');
+                    if (p1Config.fields) {
+                        p1Config.fields.forEach(f => {
+                            if (f.name) cols.push(f.name);
+                        });
+                    }
+                } else {
+                    cols.push('Order ID', 'Sales Amount');
+                }
+            } catch (e) {
+                console.error("Error fetching Phase 1 fields:", e);
+                cols.push('Order ID', 'Sales Amount');
+            }
+            GLOBAL_PHASE1_COLUMNS = cols;
+            return cols;
+        }
+
         async function loadRuleColumns(selectElement, rowId, type) {
             const row = document.getElementById(`rule-row-${rowId}`);
             let fileSelect, sheetName;
@@ -5879,11 +5986,12 @@
             if (fileId.startsWith('primary_')) {
                 if (colSelect) {
                     const label = window.primaryValueColumnName || 'Order ID';
+                    const p1Cols = await getPhase1Columns();
                     colSelect.innerHTML = '<option value="">Column</option>';
-                    colSelect.innerHTML += `<option value="Unique_ID">Unique_ID</option>`;
-                    colSelect.innerHTML += `<option value="Source_File_Name">Source_File_Name</option>`;
-                    colSelect.innerHTML += `<option value="Order ID">${label}</option>`;
-                    colSelect.innerHTML += `<option value="Sales Amount">Sales Amount</option>`;
+                    p1Cols.forEach(col => {
+                        const dispLabel = col === 'Order ID' ? label : col;
+                        colSelect.innerHTML += `<option value="${col}">${dispLabel}</option>`;
+                    });
                 }
                 return;
             }
@@ -6142,7 +6250,7 @@
 
         // Get all available columns from Phase 2 rules AND Phase 3 remark groups
         function getPhase2Columns() {
-            const columns = ['Unique_ID', 'Source_File_Name', 'Order ID', 'Sales Amount'];
+            const columns = [...GLOBAL_PHASE1_COLUMNS];
             
             // Phase 2: Matching rules columns
             const rows = document.querySelectorAll('#matching-rules-body tr');
@@ -6663,7 +6771,8 @@
             const primaryData = await apiCall('/api/primary/files');
             const rulesData = await apiCall('/api/rules/1');
             
-            let columns = ['Unique_ID', 'Source_File_Name', 'Order ID', 'Sales Amount'];
+            await getPhase1Columns();
+            let columns = [...GLOBAL_PHASE1_COLUMNS];
             
             // Get columns from Phase 2 rules
             const phase2Data = await apiCall('/api/rules/2');
@@ -7782,7 +7891,7 @@
         }
         
         // ==================== FINAL PROCESSING ====================
-        async function processAllRules() {
+        async function processAllRules(force = false) {
             try {
             try {
             const btn = document.getElementById('process-btn');
@@ -7824,11 +7933,33 @@
             const formData = new FormData();
             formData.append('selected_source_files', JSON.stringify(selectedSourceFiles));
             formData.append('custom_filename', customFilename);
+            formData.append('force', force);
             
             const startData = await apiCall('/api/process', { 
                 method: 'POST',
                 body: formData
             });
+            
+            if (startData.type === 'validation_warning') {
+                btn.disabled = false;
+                spinner.classList.add('hidden');
+                
+                const ul = document.getElementById('validation-missing-columns');
+                ul.innerHTML = startData.missing_columns.map(c => `<li>${c}</li>`).join('');
+                
+                const modal = document.getElementById('validation-warning-modal');
+                modal.classList.remove('hidden');
+                
+                document.getElementById('validation-force-btn').onclick = () => {
+                    modal.classList.add('hidden');
+                    processAllRules(true);
+                };
+                
+                document.getElementById('validation-cancel-btn').onclick = () => {
+                    modal.classList.add('hidden');
+                };
+                return;
+            }
             
             if (!startData.success) {
                 btn.disabled = false;

@@ -420,3 +420,261 @@ def resolve_primary_file_for_formula(sec_file_id, company_id, module_id):
         logger.error(f"Error resolving primary file: {e}")
         return {'success': False}
 
+
+# =============================================================================
+# ACTIVITY WINDOW ENGINE
+# =============================================================================
+# Re-applies user-saved "Activity" steps (FORMULA_ADD, FIND_REPLACE, COLUMN_RENAME,
+# COLUMN_DELETE, ROW_FILTER) to master_data every time the auto-sync engine runs.
+# This is what makes the user's ETL steps survive across auto-sync cycles.
+# =============================================================================
+
+def _sql_escape(value: str) -> str:
+    """Escape a string for safe inclusion inside a single-quoted SQL literal."""
+    if value is None:
+        return "''"
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def _safe_sql_ident(name: str) -> str:
+    """Quote a DuckDB identifier safely. Raises if name is suspicious."""
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError("identifier must be a non-empty string")
+    bad = ['"', '\n', '\r', ';', '\0']
+    for ch in bad:
+        if ch in name:
+            raise ValueError(f"identifier contains forbidden char: {ch!r}")
+    return '"' + name.replace('"', '""') + '"'
+
+
+def _column_exists(duck_conn, table: str, column: str) -> bool:
+    try:
+        rows = duck_conn.execute(
+            "SELECT 1 FROM information_schema.columns WHERE table_name = ? AND column_name = ? LIMIT 1",
+            (table.lower(), column)
+        ).fetchall()
+        return len(rows) > 0
+    except Exception:
+        try:
+            cols = duck_conn.execute(f"SELECT * FROM {table} LIMIT 0").fetchdf().columns.tolist()
+            return column in cols
+        except Exception:
+            return False
+
+
+def _ensure_column(duck_conn, table: str, column: str, data_type: str = 'VARCHAR'):
+    """Add column if it does not exist. data_type is bounded to a whitelist."""
+    if _column_exists(duck_conn, table, column):
+        return
+    if data_type not in ('VARCHAR', 'DOUBLE', 'INTEGER', 'BIGINT', 'BOOLEAN', 'DATE', 'TIMESTAMP'):
+        data_type = 'VARCHAR'
+    duck_conn.execute(f"ALTER TABLE {table} ADD COLUMN {_safe_sql_ident(column)} {data_type}")
+
+
+def _apply_formula_activity(duck_conn, act):
+    """FORMULA_ADD: ensure the column exists, then UPDATE with parsed formula SQL."""
+    payload = act.get('payload') or {}
+    expression = payload.get('expression') or payload.get('sql') or ''
+    col_name = act.get('target_column') or payload.get('output_column') or payload.get('column_name')
+    if not col_name:
+        raise ValueError("FORMULA_ADD missing target_column / output_column")
+    if not expression:
+        raise ValueError("FORMULA_ADD missing expression / sql")
+    col_ident = _safe_sql_ident(col_name)
+    _ensure_column(duck_conn, 'master_data', col_name, 'DOUBLE')
+    try:
+        duck_conn.execute(f"UPDATE master_data SET {col_ident} = ({expression})")
+    except Exception:
+        # If a plain SQL expression fails (e.g. legacy CSV) try TRY_CAST wrapping
+        duck_conn.execute(f"UPDATE master_data SET {col_ident} = TRY_CAST(({expression}) AS DOUBLE)")
+
+
+def _apply_formula_update_activity(duck_conn, act):
+    """FORMULA_UPDATE: update an existing column with a new expression."""
+    return _apply_formula_activity(duck_conn, act)
+
+
+def _apply_find_replace_activity(duck_conn, act):
+    """FIND_REPLACE: apply text replacement on one or more columns.
+    payload: {find, replace, scope_columns, case_sensitive, match_type, regex}
+    """
+    payload = act.get('payload') or {}
+    find_val = payload.get('find', '')
+    replace_val = payload.get('replace', '')
+    if not find_val:
+        raise ValueError("FIND_REPLACE missing 'find' value")
+    scope = payload.get('scope_columns') or []
+    if not scope:
+        cols = duck_conn.execute("SELECT * FROM master_data LIMIT 0").fetchdf().columns.tolist()
+        scope = [c for c in cols if c != 'Source_File_Name']
+    case_sensitive = bool(payload.get('case_sensitive', False))
+    regex = bool(payload.get('regex', False))
+    match_type = (payload.get('match_type') or 'contains').lower()
+
+    for col in scope:
+        if not _column_exists(duck_conn, 'master_data', col):
+            continue
+        col_ident = _safe_sql_ident(col)
+        if regex:
+            flags = 'g' if case_sensitive else 'gi'
+            expr = f"regexp_replace(CAST({col_ident} AS VARCHAR), {_sql_escape(find_val)}, {_sql_escape(replace_val)}, '{flags}')"
+        else:
+            if case_sensitive:
+                if match_type == 'exact':
+                    where_clause = f"CAST({col_ident} AS VARCHAR) = {_sql_escape(find_val)}"
+                elif match_type == 'starts_with':
+                    where_clause = f"CAST({col_ident} AS VARCHAR) LIKE {_sql_escape(find_val + '%')}"
+                elif match_type == 'ends_with':
+                    where_clause = f"CAST({col_ident} AS VARCHAR) LIKE {_sql_escape('%' + find_val)}"
+                else:
+                    where_clause = f"CAST({col_ident} AS VARCHAR) LIKE {_sql_escape('%' + find_val + '%')}"
+                expr = f"REPLACE(CAST({col_ident} AS VARCHAR), {_sql_escape(find_val)}, {_sql_escape(replace_val)})"
+                duck_conn.execute(f"UPDATE master_data SET {col_ident} = {expr} WHERE {where_clause}")
+            else:
+                # Escape regex meta-chars in the find string for case-insensitive literal replace
+                where_clause = f"LOWER(CAST({col_ident} AS VARCHAR)) = LOWER({_sql_escape(find_val)})"
+                expr = f"regexp_replace(CAST({col_ident} AS VARCHAR), {_sql_escape(find_val)}, {_sql_escape(replace_val)}, 'gi')"
+                duck_conn.execute(f"UPDATE master_data SET {col_ident} = {expr} WHERE {where_clause}")
+
+
+def _apply_rename_activity(duck_conn, act):
+    """COLUMN_RENAME: rename an existing column."""
+    payload = act.get('payload') or {}
+    frm = payload.get('from') or payload.get('from_column') or act.get('target_column')
+    to = payload.get('to') or payload.get('to_column')
+    if not frm or not to:
+        raise ValueError("COLUMN_RENAME requires 'from' and 'to'")
+    if not _column_exists(duck_conn, 'master_data', frm):
+        raise ValueError(f"Column '{frm}' does not exist")
+    if _column_exists(duck_conn, 'master_data', to) and frm != to:
+        raise ValueError(f"Column '{to}' already exists")
+    cols = duck_conn.execute("SELECT * FROM master_data LIMIT 0").fetchdf().columns.tolist()
+    select_list = ', '.join(
+        f'{_safe_sql_ident(c)} AS {_safe_sql_ident(to)}' if c == frm else _safe_sql_ident(c)
+        for c in cols
+    )
+    duck_conn.execute(f"CREATE TABLE master_data_new AS SELECT {select_list} FROM master_data")
+    duck_conn.execute("DROP TABLE master_data")
+    duck_conn.execute("ALTER TABLE master_data_new RENAME TO master_data")
+
+
+def _apply_delete_activity(duck_conn, act):
+    """COLUMN_DELETE: drop a column."""
+    payload = act.get('payload') or {}
+    col = payload.get('column') or act.get('target_column')
+    if not col:
+        raise ValueError("COLUMN_DELETE missing 'column'")
+    if not _column_exists(duck_conn, 'master_data', col):
+        return  # already gone
+    duck_conn.execute(f"ALTER TABLE master_data DROP COLUMN {_safe_sql_ident(col)}")
+
+
+def _apply_filter_activity(duck_conn, act):
+    """ROW_FILTER: create/replace a `master_data_filtered` VIEW from the conditions.
+
+    This is intentionally a VIEW (not a destructive mutation): master_data is left
+    untouched and downstream consumers that know about the filtered view can
+    query `master_data_filtered`. Filter is re-applied on every auto-sync cycle.
+    """
+    payload = act.get('payload') or {}
+    conds = payload.get('conditions') or []
+    if not conds:
+        raise ValueError("ROW_FILTER missing 'conditions'")
+    logic = (payload.get('logic') or 'AND').upper()
+    if logic not in ('AND', 'OR'):
+        logic = 'AND'
+
+    cols = duck_conn.execute("SELECT * FROM master_data LIMIT 0").fetchdf().columns.tolist()
+    where_clauses = []
+    for c in conds:
+        col = c.get('column', '')
+        if not col or col not in cols:
+            continue
+        op = (c.get('operator') or '').lower()
+        val = c.get('value', '')
+        vmin = c.get('value_min', '')
+        vmax = c.get('value_max', '')
+        col_ident = _safe_sql_ident(col)
+        if op == 'equal_to':
+            where_clauses.append(f"CAST({col_ident} AS VARCHAR) = {_sql_escape(str(val))}")
+        elif op == 'not_equal_to':
+            where_clauses.append(f"(CAST({col_ident} AS VARCHAR) != {_sql_escape(str(val))} OR {col_ident} IS NULL)")
+        elif op == 'contains':
+            where_clauses.append(f"CAST({col_ident} AS VARCHAR) LIKE {_sql_escape('%' + str(val) + '%')}")
+        elif op == 'not_contains':
+            where_clauses.append(f"(CAST({col_ident} AS VARCHAR) NOT LIKE {_sql_escape('%' + str(val) + '%')} OR {col_ident} IS NULL)")
+        elif op == 'starts_with':
+            where_clauses.append(f"CAST({col_ident} AS VARCHAR) LIKE {_sql_escape(str(val) + '%')}")
+        elif op == 'ends_with':
+            where_clauses.append(f"CAST({col_ident} AS VARCHAR) LIKE {_sql_escape('%' + str(val))}")
+        elif op == 'greater_than':
+            try:
+                fv = float(val) if val not in (None, '') else 0
+                where_clauses.append(f"TRY_CAST({col_ident} AS DOUBLE) > {_sql_escape(fv)}")
+            except Exception:
+                pass
+        elif op == 'less_than':
+            try:
+                fv = float(val) if val not in (None, '') else 0
+                where_clauses.append(f"TRY_CAST({col_ident} AS DOUBLE) < {_sql_escape(fv)}")
+            except Exception:
+                pass
+        elif op == 'between':
+            try:
+                fmin = float(vmin) if vmin not in (None, '') else 0
+                fmax = float(vmax) if vmax not in (None, '') else 0
+                where_clauses.append(f"TRY_CAST({col_ident} AS DOUBLE) BETWEEN {_sql_escape(fmin)} AND {_sql_escape(fmax)}")
+            except Exception:
+                pass
+        elif op == 'blank':
+            where_clauses.append(f"({col_ident} IS NULL OR TRIM(CAST({col_ident} AS VARCHAR)) = '')")
+        elif op == 'not_blank':
+            where_clauses.append(f"({col_ident} IS NOT NULL AND TRIM(CAST({col_ident} AS VARCHAR)) != '')")
+
+    joiner = ' AND ' if logic == 'AND' else ' OR '
+    where_sql = joiner.join(where_clauses) if where_clauses else 'TRUE'
+
+    duck_conn.execute("DROP VIEW IF EXISTS master_data_filtered")
+    duck_conn.execute(f"CREATE VIEW master_data_filtered AS SELECT * FROM master_data WHERE {where_sql}")
+
+
+def apply_activities(duck_conn, folder_id, company_id, module_id):
+    """
+    Re-apply all user-saved activity steps in order to the master_data table.
+    Supports: FORMULA_ADD, FORMULA_UPDATE, FIND_REPLACE, COLUMN_RENAME, COLUMN_DELETE, ROW_FILTER.
+    Updates `master_activities.validation_status` / `last_error` / `last_applied_at` as it goes.
+    """
+    from backend.database import list_master_activities, mark_activity_applied
+    try:
+        activities = list_master_activities(folder_id, company_id=company_id, module_id=module_id, enabled_only=True)
+    except Exception as e:
+        logger.error(f"apply_activities: failed to list activities: {e}")
+        return
+    activities.sort(key=lambda a: (a.get('step_order', 0), a.get('id', 0)))
+    for act in activities:
+        act_id = act.get('id')
+        act_type = (act.get('activity_type') or '').upper()
+        try:
+            if act_type == 'FORMULA_ADD':
+                _apply_formula_activity(duck_conn, act)
+            elif act_type == 'FORMULA_UPDATE':
+                _apply_formula_update_activity(duck_conn, act)
+            elif act_type == 'FIND_REPLACE':
+                _apply_find_replace_activity(duck_conn, act)
+            elif act_type == 'COLUMN_RENAME':
+                _apply_rename_activity(duck_conn, act)
+            elif act_type == 'COLUMN_DELETE':
+                _apply_delete_activity(duck_conn, act)
+            elif act_type == 'ROW_FILTER':
+                _apply_filter_activity(duck_conn, act)
+            else:
+                mark_activity_applied(act_id, 'warning', f"Unknown activity type: {act_type}")
+                continue
+            mark_activity_applied(act_id, 'ok', None)
+        except Exception as e:
+            logger.error(f"Activity {act_id} ({act_type}) failed: {e}")
+            try:
+                mark_activity_applied(act_id, 'error', str(e))
+            except Exception:
+                pass
+

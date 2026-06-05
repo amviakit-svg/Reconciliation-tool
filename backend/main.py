@@ -172,7 +172,11 @@ from database import (
     restore_from_recycle_bin, permanent_delete_from_recycle_bin,
     get_physical_storage_path,
     get_company_storage_path, get_user_folder_path,
-    format_storage_error, is_valid_folder_name
+    format_storage_error, is_valid_folder_name,
+    # Activity Window (master_activities) helpers
+    list_master_activities, get_master_activity, create_master_activity,
+    update_master_activity, delete_master_activity, reorder_master_activities,
+    migrate_legacy_master_formulas,
 )
 
 from primary_data import generate_primary_data, preview_primary_data, list_primary_files, get_primary_file_path, read_primary_file, get_primary_field_columns
@@ -184,6 +188,7 @@ from auth import get_current_active_user, require_role, require_page_permission,
 from auth_routes import router as auth_router
 from super_admin_routes import router as super_admin_router
 from company_routes import router as company_router
+from database import create_activity_from_action as _create_activity_from_action
 
 app = FastAPI(title="Reconciliation Tool - Enterprise SaaS", version="3.0.0")
 
@@ -1654,7 +1659,7 @@ async def get_active_syncs(current_user: Optional[dict] = Depends(get_optional_u
             SELECT f.id, f.original_name, f.sync_status, f.folder_id, fo.name as folder_name
             FROM files f
             JOIN folders fo ON f.folder_id = fo.id
-            WHERE f.sync_status = 'in_processing'
+            WHERE f.sync_status IN ('in_processing', 'pending')
         '''
         
         # If we have user isolation, apply it
@@ -2183,6 +2188,288 @@ async def export_master(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ============ MASTER COLUMN RENAME / ROW FILTER APIs ============
+
+@app.patch("/api/master/{folder_id}/columns/{column_name}")
+async def rename_master_column(
+    folder_id: int,
+    column_name: str,
+    new_name: str = Form(...),
+    current_user: Optional[dict] = Depends(get_optional_user)
+):
+    """
+    Rename a column in the master file. The change is auto-captured as
+    a COLUMN_RENAME activity so it survives across auto-sync cycles.
+    """
+    try:
+        master = get_master_file(folder_id)
+        if not master:
+            raise HTTPException(status_code=404, detail="Master file not found")
+
+        cid, mid = _get_context(current_user)
+        if current_user is not None and (master.get('company_id') != cid or master.get('module_id') != mid):
+            raise HTTPException(status_code=404, detail="Master file not found")
+
+        if not new_name or not new_name.strip():
+            raise HTTPException(status_code=422, detail="new_name is required")
+        new_name = new_name.strip()
+
+        conn = duckdb.connect(master['db_path'])
+        try:
+            existing_cols = conn.execute("SELECT * FROM master_data LIMIT 0").fetchdf().columns.tolist()
+            if column_name not in existing_cols:
+                raise HTTPException(status_code=422, detail=f"Column '{column_name}' not found")
+            if new_name in existing_cols and new_name != column_name:
+                raise HTTPException(status_code=422, detail=f"Column '{new_name}' already exists")
+            if column_name == 'Source_File_Name':
+                raise HTTPException(status_code=422, detail="Cannot rename protected column 'Source_File_Name'")
+
+            # DuckDB does not support RENAME COLUMN directly on all versions; use SELECT-based rename
+            cols = [c for c in existing_cols if c != column_name]
+            quoted = ', '.join(f'"{c}"' for c in cols)
+            quoted_new = ', '.join([f'"{c}" AS "{new_name}"' if c == column_name else f'"{c}"' for c in existing_cols])
+            conn.execute(f'CREATE TABLE master_data_new AS SELECT {quoted_new} FROM master_data')
+            conn.execute('DROP TABLE master_data')
+            conn.execute('ALTER TABLE master_data_new RENAME TO master_data')
+        finally:
+            conn.close()
+
+        # Update metadata columns
+        try:
+            conn_meta = get_db_connection()
+            updated_cols = [new_name if c == column_name else c for c in existing_cols]
+            conn_meta.execute(
+                "UPDATE master_files SET columns = ? WHERE folder_id = ?",
+                (json.dumps(updated_cols), folder_id)
+            )
+            conn_meta.commit()
+            conn_meta.close()
+        except Exception as e:
+            logger.warning(f"Failed to update master metadata columns: {e}")
+
+        # === AUTO-CAPTURE: COLUMN_RENAME ===
+        try:
+            cid_rn, mid_rn = _get_context(current_user)
+            _create_activity_from_action(
+                folder_id=folder_id, action_type='COLUMN_RENAME',
+                payload={'from': column_name, 'to': new_name},
+                target_column=new_name,
+                company_id=cid_rn, module_id=mid_rn,
+                master_file_id=master.get('id'),
+                user_id=current_user.get('user_id') if current_user else None,
+            )
+        except Exception as _e:
+            logger.warning(f'Auto-capture COLUMN_RENAME failed: {_e}')
+
+        return {
+            "success": True,
+            "message": f"Column '{column_name}' renamed to '{new_name}'",
+            "from": column_name,
+            "to": new_name,
+            "columns": updated_cols,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Rename column error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/master/{folder_id}/row-filter")
+async def apply_row_filter(
+    folder_id: int,
+    logic: str = Form("AND"),
+    conditions: str = Form(...),  # JSON array of {column, operator, value, value_min, value_max}
+    filter_name: Optional[str] = Form(None),
+    current_user: Optional[dict] = Depends(get_optional_user)
+):
+    """
+    Apply a row-filter to master_data and persist the filter as a ROW_FILTER
+    activity so that whenever files are added/removed (auto-sync) the
+    filtered view is re-applied to the surviving data.
+
+    conditions schema: [{column, operator, value, value_min, value_max}, ...]
+    operators supported: equal_to, not_equal_to, contains, not_contains,
+                        starts_with, ends_with, greater_than, less_than,
+                        between, blank, not_blank
+    """
+    try:
+        master = get_master_file(folder_id)
+        if not master:
+            raise HTTPException(status_code=404, detail="Master file not found")
+
+        cid, mid = _get_context(current_user)
+        if current_user is not None and (master.get('company_id') != cid or master.get('module_id') != mid):
+            raise HTTPException(status_code=404, detail="Master file not found")
+
+        # Parse conditions JSON
+        try:
+            conds = json.loads(conditions) if isinstance(conditions, str) else conditions
+            if not isinstance(conds, list):
+                conds = []
+        except (json.JSONDecodeError, TypeError):
+            raise HTTPException(status_code=422, detail="conditions must be a valid JSON array")
+        if not conds:
+            raise HTTPException(status_code=422, detail="At least one condition is required")
+        if logic not in ('AND', 'OR'):
+            logic = 'AND'
+
+        conn = duckdb.connect(master['db_path'], read_only=True)
+        try:
+            existing_cols = conn.execute("SELECT * FROM master_data LIMIT 0").fetchdf().columns.tolist()
+            total_rows = conn.execute("SELECT COUNT(*) FROM master_data").fetchone()[0]
+        finally:
+            conn.close()
+
+        # Validate condition columns
+        for c in conds:
+            col = c.get('column', '')
+            if not col or col not in existing_cols:
+                raise HTTPException(status_code=422, detail=f"Condition column '{col}' not found in master")
+
+        # AUTO-CAPTURE: ROW_FILTER (persisted activity, not actual filter applied)
+        try:
+            cid_rf, mid_rf = _get_context(current_user)
+            _create_activity_from_action(
+                folder_id=folder_id, action_type='ROW_FILTER',
+                payload={
+                    'logic': logic,
+                    'conditions': conds,
+                    'filter_name': filter_name or f"Filter {datetime.now().strftime('%H:%M:%S')}",
+                },
+                target_column=None,
+                company_id=cid_rf, module_id=mid_rf,
+                master_file_id=master.get('id'),
+                user_id=current_user.get('user_id') if current_user else None,
+            )
+        except Exception as _e:
+            logger.warning(f'Auto-capture ROW_FILTER failed: {_e}')
+
+        return {
+            "success": True,
+            "message": "Filter saved as activity. Use /filtered-preview to see the result.",
+            "total_rows_before": total_rows,
+            "logic": logic,
+            "conditions": conds,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Apply row filter error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/master/{folder_id}/filtered-preview")
+async def filtered_preview(
+    folder_id: int,
+    logic: str = Form("AND"),
+    conditions: str = Form(...),
+    limit: int = Form(50),
+    current_user: Optional[dict] = Depends(get_optional_user)
+):
+    """
+    Return a DRY-RUN preview of the filter (does NOT modify master_data or
+    save any activity). Pure read-only computation against the current
+    master_data so the user can verify the result before saving the
+    ROW_FILTER activity.
+    """
+    try:
+        master = get_master_file(folder_id)
+        if not master:
+            raise HTTPException(status_code=404, detail="Master file not found")
+
+        cid, mid = _get_context(current_user)
+        if current_user is not None and (master.get('company_id') != cid or master.get('module_id') != mid):
+            raise HTTPException(status_code=404, detail="Master file not found")
+
+        try:
+            conds = json.loads(conditions) if isinstance(conditions, str) else conditions
+            if not isinstance(conds, list):
+                conds = []
+        except (json.JSONDecodeError, TypeError):
+            raise HTTPException(status_code=422, detail="conditions must be a valid JSON array")
+        if not conds:
+            raise HTTPException(status_code=422, detail="At least one condition is required")
+        if logic not in ('AND', 'OR'):
+            logic = 'AND'
+        limit = max(1, min(int(limit or 50), 1000))
+
+        conn = duckdb.connect(master['db_path'], read_only=True)
+        try:
+            existing_cols = conn.execute("SELECT * FROM master_data LIMIT 0").fetchdf().columns.tolist()
+            for c in conds:
+                col = c.get('column', '')
+                if not col or col not in existing_cols:
+                    raise HTTPException(status_code=422, detail=f"Condition column '{col}' not found")
+
+            # Build a SELECT statement with WHERE conditions
+            where_clauses = []
+            params = []
+            for c in conds:
+                col = c['column']
+                op = (c.get('operator') or '').lower()
+                val = c.get('value', '')
+                vmin = c.get('value_min', '')
+                vmax = c.get('value_max', '')
+
+                if op == 'equal_to':
+                    where_clauses.append(f'CAST("{col}" AS VARCHAR) = ?')
+                    params.append(str(val))
+                elif op == 'not_equal_to':
+                    where_clauses.append(f'(CAST("{col}" AS VARCHAR) != ? OR "{col}" IS NULL)')
+                    params.append(str(val))
+                elif op == 'contains':
+                    where_clauses.append(f'CAST("{col}" AS VARCHAR) LIKE ?')
+                    params.append(f'%{val}%')
+                elif op == 'not_contains':
+                    where_clauses.append(f'(CAST("{col}" AS VARCHAR) NOT LIKE ? OR "{col}" IS NULL)')
+                    params.append(f'%{val}%')
+                elif op == 'starts_with':
+                    where_clauses.append(f'CAST("{col}" AS VARCHAR) LIKE ?')
+                    params.append(f'{val}%')
+                elif op == 'ends_with':
+                    where_clauses.append(f'CAST("{col}" AS VARCHAR) LIKE ?')
+                    params.append(f'%{val}')
+                elif op == 'greater_than':
+                    where_clauses.append(f'TRY_CAST("{col}" AS DOUBLE) > ?')
+                    params.append(float(val) if val not in (None, '') else 0)
+                elif op == 'less_than':
+                    where_clauses.append(f'TRY_CAST("{col}" AS DOUBLE) < ?')
+                    params.append(float(val) if val not in (None, '') else 0)
+                elif op == 'between':
+                    where_clauses.append(f'TRY_CAST("{col}" AS DOUBLE) BETWEEN ? AND ?')
+                    params.append(float(vmin) if vmin not in (None, '') else 0)
+                    params.append(float(vmax) if vmax not in (None, '') else 0)
+                elif op == 'blank':
+                    where_clauses.append(f'("{col}" IS NULL OR TRIM(CAST("{col}" AS VARCHAR)) = \'\')')
+                elif op == 'not_blank':
+                    where_clauses.append(f'("{col}" IS NOT NULL AND TRIM(CAST("{col}" AS VARCHAR)) != \'\')')
+
+            joiner = ' AND ' if logic == 'AND' else ' OR '
+            where_sql = joiner.join(where_clauses) if where_clauses else 'TRUE'
+
+            count_sql = f'SELECT COUNT(*) FROM master_data WHERE {where_sql}'
+            total_filtered = conn.execute(count_sql, params).fetchone()[0]
+
+            data_sql = f'SELECT * FROM master_data WHERE {where_sql} LIMIT ?'
+            result = conn.execute(data_sql, params + [limit]).fetchdf()
+        finally:
+            conn.close()
+
+        return {
+            "success": True,
+            "total_filtered": int(total_filtered),
+            "limit": limit,
+            "columns": result.columns.tolist(),
+            "data": clean_nan_values(result.to_dict(orient='records')),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Filtered preview error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ============ MASTER FILE FORMULA APIs ============
 
 @app.delete("/api/master/{folder_id}")
@@ -2628,7 +2915,33 @@ async def apply_master_formula(
             update_master_formulas(folder_id, existing_formulas)
         except Exception as e:
             logger.warning(f"Failed to persist formula: {e}")
-        
+
+        # === AUTO-CAPTURE: FORMULA_ADD (apply_master_formula) ===
+        try:
+            cid_f, mid_f = _get_context(current_user)
+            _create_activity_from_action(
+                folder_id=folder_id, action_type='FORMULA_ADD',
+                payload={
+                    'output_column': column_name,
+                    'formula_type': formula_type,
+                    'source_columns': cols,
+                    'constant_value': constant_value,
+                    'primary_column': primary_column,
+                    'secondary_file': secondary_file,
+                    'secondary_sheet': secondary_sheet,
+                    'secondary_match_column': secondary_match_column,
+                    'secondary_value_column': secondary_value_column,
+                    'count_column': count_column,
+                    'match_type': match_type,
+                },
+                target_column=column_name,
+                company_id=cid_f, module_id=mid_f,
+                master_file_id=master.get('id'),
+                user_id=current_user.get('user_id') if current_user else None,
+            )
+        except Exception as _e:
+            logger.warning(f'Auto-capture FORMULA_ADD (apply_master_formula) failed: {_e}')
+
         return {
             "success": True,
             "message": f"Formula '{formula_type}' applied successfully",
@@ -2638,7 +2951,7 @@ async def apply_master_formula(
             "rows_affected": row_count,
             "columns": updated_cols
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -2674,7 +2987,7 @@ async def delete_master_column(folder_id: int, column_name: str, current_user: O
         # Get updated columns
         updated_cols = conn.execute("SELECT * FROM master_data LIMIT 0").fetchdf().columns.tolist()
         conn.close()
-        
+
         # Update metadata
         try:
             conn_sqlite = get_db_connection()
@@ -2686,23 +2999,25 @@ async def delete_master_column(folder_id: int, column_name: str, current_user: O
             conn_sqlite.close()
         except Exception as e:
             logger.warning(f"Failed to update master metadata columns: {e}")
-        
-        # Remove from persisted formulas if present
+
+        # === AUTO-CAPTURE: COLUMN_DELETE ===
         try:
-            existing_formulas = get_master_formulas(folder_id)
-            new_formulas = [f for f in existing_formulas if f.get('column_name') != column_name]
-            if len(new_formulas) != len(existing_formulas):
-                update_master_formulas(folder_id, new_formulas)
-                logger.info(f"Removed formula for deleted column '{column_name}' from persisted formulas")
-        except Exception as e:
-            logger.warning(f"Failed to update formulas after column delete: {e}")
-        
+            cid_d, mid_d = _get_context(current_user)
+            _create_activity_from_action(
+                folder_id=folder_id, action_type='COLUMN_DELETE',
+                payload={'column': column_name}, target_column=column_name,
+                company_id=cid_d, module_id=mid_d,
+                master_file_id=master.get('id'),
+                user_id=current_user.get('user_id') if current_user else None,
+            )
+        except Exception as _e:
+            logger.warning(f'Auto-capture COLUMN_DELETE failed: {_e}')
+
         return {
             "success": True,
             "message": f"Column '{column_name}' deleted successfully",
             "columns": updated_cols
         }
-        
     except HTTPException:
         raise
     except Exception as e:
@@ -3034,17 +3349,34 @@ async def find_replace_master(
         finally:
             conn.close()
 
-        verb = "would replace" if is_dry_run else "replaced"
-        summary = f"{verb} {total_rows_affected} occurrence(s) across {len(columns_modified)} column(s)"
+        # === AUTO-CAPTURE: FIND_REPLACE ===
+        try:
+            cid_fr, mid_fr = _get_context(current_user)
+            _create_activity_from_action(
+                folder_id=folder_id, action_type='FIND_REPLACE',
+                payload={
+                    'find_text': find_text,
+                    'replace_text': replace_text,
+                    'match_type': match_type,
+                    'case_sensitive': is_case_sensitive,
+                    'column': column,
+                    'rows_affected': total_rows_affected,
+                },
+                target_column=column,
+                company_id=cid_fr, module_id=mid_fr,
+                master_file_id=master.get('id'),
+                user_id=current_user.get('user_id') if current_user else None,
+            )
+        except Exception as _e:
+            logger.warning(f'Auto-capture FIND_REPLACE failed: {_e}')
+
         return {
             "success": True,
-            "message": summary,
-            "dry_run": is_dry_run,
-            "match_type": match_type,
-            "case_sensitive": is_case_sensitive,
+            "message": f"Find & Replace completed across {len(columns_modified)} column(s)",
             "columns_modified": columns_modified,
-            "total_rows_affected": int(total_rows_affected)
+            "total_rows_affected": total_rows_affected,
         }
+
     except HTTPException:
         raise
     except Exception as e:
@@ -3147,6 +3479,26 @@ async def apply_formula_expression(
         except Exception as e:
             logger.warning(f"Failed to persist formula: {e}")
 
+        # === AUTO-CAPTURE: FORMULA_ADD (apply_formula_expression) ===
+        try:
+            cid_e, mid_e = _get_context(current_user)
+            _create_activity_from_action(
+                folder_id=folder_id, action_type='FORMULA_ADD',
+                payload={
+                    'output_column': column_name,
+                    'formula_type': 'EXPRESSION',
+                    'expression': expression,
+                    'source_columns': referenced_cols,
+                    'sql': sql_expr,
+                },
+                target_column=column_name,
+                company_id=cid_e, module_id=mid_e,
+                master_file_id=master.get('id'),
+                user_id=current_user.get('user_id') if current_user else None,
+            )
+        except Exception as _e:
+            logger.warning(f'Auto-capture FORMULA_ADD (apply_formula_expression) failed: {_e}')
+
         return {
             "success": True,
             "message": f"Formula expression applied successfully",
@@ -3237,6 +3589,345 @@ async def preview_formula_expression(
         }
 
 
+# ============ MASTER ACTIVITY APIs (Activity Window) ============
+# ETL-style persistent steps. The user can save formula, find/replace, rename, or
+# delete column steps. They survive across auto-sync cycles when files are
+# added or removed in the folder.
+
+@app.get("/api/master/{folder_id}/activities")
+async def api_list_activities(folder_id: int, current_user: Optional[dict] = Depends(get_optional_user)):
+    """List all activities for a master file, in step order."""
+    try:
+        cid, mid = _get_context(current_user)
+        master = get_master_file(folder_id)
+        if not master:
+            raise HTTPException(status_code=404, detail="Master file not found")
+        if current_user is not None and (master.get('company_id') != cid or master.get('module_id') != mid):
+            raise HTTPException(status_code=404, detail="Master file not found")
+
+        activities = list_master_activities(folder_id, company_id=cid, module_id=mid, enabled_only=False)
+        # Reorder by step_order then id
+        activities.sort(key=lambda a: (a.get('step_order', 0), a.get('id', 0)))
+
+        return {
+            "success": True,
+            "activities": activities,
+            "count": len(activities),
+            "folder_id": folder_id
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"List activities error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/master/{folder_id}/activities")
+async def api_create_activity(
+    folder_id: int,
+    activity_type: str = Form(...),
+    payload: str = Form(...),
+    step_order: Optional[str] = Form(None),
+    target_column: Optional[str] = Form(None),
+    current_user: Optional[dict] = Depends(get_optional_user)
+):
+    """Create a new activity step (formula, find/replace, rename, delete)."""
+    try:
+        cid, mid = _get_context(current_user)
+        master = get_master_file(folder_id)
+        if not master:
+            raise HTTPException(status_code=404, detail="Master file not found")
+        if current_user is not None and (master.get('company_id') != cid or master.get('module_id') != mid):
+            raise HTTPException(status_code=404, detail="Master file not found")
+
+        # Parse payload as JSON
+        try:
+            payload_dict = json.loads(payload) if isinstance(payload, str) else payload
+            if not isinstance(payload_dict, dict):
+                payload_dict = {}
+        except (json.JSONDecodeError, TypeError):
+            raise HTTPException(status_code=422, detail="payload must be valid JSON")
+
+        # Validate activity_type
+        valid_types = {'FORMULA_ADD', 'FORMULA_UPDATE', 'FIND_REPLACE', 'COLUMN_RENAME', 'COLUMN_DELETE', 'ROW_FILTER'}
+        act_upper = (activity_type or '').upper()
+        if act_upper not in valid_types:
+            raise HTTPException(status_code=422, detail=f"activity_type must be one of: {sorted(valid_types)}")
+
+        # Auto-derive target_column from payload when not supplied
+        if not target_column:
+            if act_upper in ('FORMULA_ADD',):
+                target_column = payload_dict.get('output_column') or payload_dict.get('column_name')
+            elif act_upper == 'FORMULA_UPDATE':
+                target_column = payload_dict.get('target_column')
+            elif act_upper == 'COLUMN_RENAME':
+                target_column = payload_dict.get('from')
+            elif act_upper == 'COLUMN_DELETE':
+                target_column = payload_dict.get('column')
+
+        # Parse step_order
+        so = None
+        if step_order is not None and str(step_order).strip():
+            try:
+                so = int(step_order)
+            except ValueError:
+                so = None
+
+        user_id = current_user.get('user_id') if current_user else None
+        activity_id = create_master_activity(
+            folder_id=folder_id,
+            activity_type=act_upper,
+            payload=payload_dict,
+            step_order=so,
+            target_column=target_column,
+            company_id=cid,
+            module_id=mid,
+            master_file_id=master.get('id'),
+            created_by=user_id,
+        )
+
+        # Read back the created activity
+        act = get_master_activity(activity_id)
+        return {"success": True, "activity": act, "activity_id": activity_id, "message": "Activity created"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Create activity error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.patch("/api/master/{folder_id}/activities/{activity_id}")
+async def api_update_activity(
+    folder_id: int,
+    activity_id: int,
+    payload: Optional[str] = Form(None),
+    is_enabled: Optional[str] = Form(None),
+    target_column: Optional[str] = Form(None),
+    step_order: Optional[str] = Form(None),
+    current_user: Optional[dict] = Depends(get_optional_user)
+):
+    """Update an activity (toggle enabled, edit payload, rename, etc.)."""
+    try:
+        cid, mid = _get_context(current_user)
+        existing = get_master_activity(activity_id)
+        if not existing or existing.get('folder_id') != folder_id:
+            raise HTTPException(status_code=404, detail="Activity not found")
+
+        kwargs = {}
+        if payload is not None:
+            try:
+                payload_dict = json.loads(payload) if isinstance(payload, str) else payload
+            except (json.JSONDecodeError, TypeError):
+                raise HTTPException(status_code=422, detail="payload must be valid JSON")
+            kwargs['payload'] = payload_dict
+
+        if is_enabled is not None:
+            if str(is_enabled).lower() in ('true', '1', 'yes'):
+                kwargs['is_enabled'] = 1
+            elif str(is_enabled).lower() in ('false', '0', 'no'):
+                kwargs['is_enabled'] = 0
+            else:
+                raise HTTPException(status_code=422, detail="is_enabled must be true/false")
+
+        if target_column is not None:
+            kwargs['target_column'] = target_column
+
+        if step_order is not None and str(step_order).strip():
+            try:
+                kwargs['step_order'] = int(step_order)
+            except ValueError:
+                raise HTTPException(status_code=422, detail="step_order must be an integer")
+
+        if not kwargs:
+            raise HTTPException(status_code=422, detail="No updatable fields provided")
+
+        update_master_activity(activity_id, **kwargs)
+        updated = get_master_activity(activity_id)
+        return {"success": True, "activity": updated, "message": "Activity updated"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Update activity error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/master/{folder_id}/activities/{activity_id}")
+async def api_delete_activity(
+    folder_id: int,
+    activity_id: int,
+    current_user: Optional[dict] = Depends(get_optional_user)
+):
+    """Delete a single activity step."""
+    try:
+        existing = get_master_activity(activity_id)
+        if not existing or existing.get('folder_id') != folder_id:
+            raise HTTPException(status_code=404, detail="Activity not found")
+        delete_master_activity(activity_id)
+        return {"success": True, "message": "Activity deleted"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Delete activity error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/master/{folder_id}/activities/reorder")
+async def api_reorder_activities(
+    folder_id: int,
+    ordered_ids: str = Form(...),
+    current_user: Optional[dict] = Depends(get_optional_user)
+):
+    """Reorder activity steps. Pass the IDs in the desired order."""
+    try:
+        try:
+            ids_list = json.loads(ordered_ids)
+            if not isinstance(ids_list, list):
+                raise ValueError()
+            ids_list = [int(x) for x in ids_list]
+        except (json.JSONDecodeError, ValueError, TypeError):
+            raise HTTPException(status_code=422, detail="ordered_ids must be a JSON array of integers")
+
+        # Verify all ids belong to this folder
+        existing = list_master_activities(folder_id, enabled_only=False)
+        valid_ids = {a['id'] for a in existing}
+        for aid in ids_list:
+            if aid not in valid_ids:
+                raise HTTPException(status_code=422, detail=f"Activity {aid} does not belong to folder {folder_id}")
+
+        reorder_master_activities(folder_id, ids_list)
+        return {"success": True, "message": "Activities reordered", "count": len(ids_list)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Reorder activities error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/master/{folder_id}/activities/{activity_id}/test")
+async def api_test_activity(
+    folder_id: int,
+    activity_id: int,
+    current_user: Optional[dict] = Depends(get_optional_user)
+):
+    """Dry-run an activity on the first 5 rows of master_data.
+    Does NOT persist any changes. Returns before/after samples."""
+    try:
+        cid, mid = _get_context(current_user)
+        master = get_master_file(folder_id)
+        if not master:
+            raise HTTPException(status_code=404, detail="Master file not found")
+
+        existing = get_master_activity(activity_id)
+        if not existing or existing.get('folder_id') != folder_id:
+            raise HTTPException(status_code=404, detail="Activity not found")
+
+        if not os.path.exists(master['db_path']):
+            raise HTTPException(status_code=404, detail="Master DuckDB file not found on disk")
+
+        conn = duckdb.connect(master['db_path'], read_only=True)
+        try:
+            tables = conn.execute("SHOW TABLES").fetchall()
+            if ('master_data',) not in tables:
+                return {"success": False, "message": "master_data table does not exist", "preview": []}
+            existing_cols = conn.execute("SELECT * FROM master_data LIMIT 0").fetchdf().columns.tolist()
+            sample = conn.execute("SELECT * FROM master_data LIMIT 5").fetchdf()
+        finally:
+            conn.close()
+
+        # Build a synthetic "after" view by describing the change.
+        # For full safety we run the activity in an in-memory DuckDB copy with 5 rows.
+        preview = {
+            "rows_before": len(sample),
+            "columns_before": existing_cols,
+            "activity_type": existing.get('activity_type'),
+            "would_change": True,
+        }
+        preview["before_sample"] = clean_nan_values(sample.to_dict(orient='records'))
+
+        act_type = (existing.get('activity_type') or '').upper()
+        payload = existing.get('payload') or {}
+
+        if act_type == 'FIND_REPLACE':
+            fv = payload.get('find', '')
+            rv = payload.get('replace', '')
+            scope = payload.get('scope_columns') or [c for c in existing_cols if c != 'Source_File_Name']
+            after_rows = []
+            for row in preview["before_sample"]:
+                new_row = dict(row)
+                for c in scope:
+                    if c in new_row and new_row[c] is not None:
+                        val = str(new_row[c])
+                        if fv and fv in val:
+                            new_row[c] = val.replace(fv, rv)
+                after_rows.append(new_row)
+            preview["after_sample"] = after_rows
+            preview["affected_columns"] = scope
+
+        elif act_type == 'FORMULA_ADD':
+            expr = payload.get('expression') or ''
+            out_col = payload.get('output_column') or existing.get('target_column')
+            validation = validate_formula(expr, existing_cols)
+            if not validation["valid"]:
+                return {
+                    "success": False,
+                    "message": validation["error"],
+                    "suggestion": validation.get("suggestion", ""),
+                    "preview": preview
+                }
+            sql_expr = validation["sql"]
+            preview["sql"] = sql_expr
+            preview["output_column"] = out_col
+            try:
+                conn_rw = duckdb.connect(master['db_path'], read_only=True)
+                try:
+                    q = f"SELECT {sql_expr} as result FROM master_data LIMIT 5"
+                    r = conn_rw.execute(q).fetchdf()
+                    preview["after_sample"] = clean_nan_values(r['result'].tolist())
+                finally:
+                    conn_rw.close()
+            except Exception as e:
+                preview["after_sample"] = []
+                preview["execution_error"] = str(e)
+            preview["affected_columns"] = [out_col] if out_col else []
+
+        elif act_type == 'COLUMN_RENAME':
+            frm = payload.get('from')
+            to = payload.get('to')
+            preview["affected_columns"] = [frm, to]
+            preview["after_sample"] = preview["before_sample"]  # rename is a metadata op, no row changes
+            preview["note"] = f"Renaming column '{frm}' to '{to}' is a schema change; rows are not modified."
+
+        elif act_type == 'COLUMN_DELETE':
+            col = payload.get('column')
+            preview["affected_columns"] = [col]
+            preview["after_sample"] = [
+                {k: v for k, v in r.items() if k != col}
+                for r in preview["before_sample"]
+            ]
+            preview["note"] = f"Deleting column '{col}' will drop the column from master_data."
+        else:
+            preview["after_sample"] = preview["before_sample"]
+
+        return {"success": True, "preview": preview}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Test activity error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/admin/migrate-legacy-formulas")
+async def api_migrate_legacy_formulas(current_user: Optional[dict] = Depends(get_optional_user)):
+    """Admin/diagnostic endpoint: run the one-time migration of master_files.formulas
+    into master_activities. Idempotent — safe to call multiple times."""
+    try:
+        result = migrate_legacy_master_formulas()
+        return {"success": True, **result}
+    except Exception as e:
+        logger.error(f"Migration endpoint error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ============ PRIMARY DATA APIs ============
 
 @app.post("/api/primary/generate")
@@ -3246,7 +3937,8 @@ async def generate_primary(
     column_name: str = Form(...),
     header_row: str = Form("1"),
     sales_amount_column: str = Form(None),
-    fields: str = Form(None)
+    fields: str = Form(None),
+    current_user: Optional[dict] = Depends(get_optional_user)
 ):
     """Generate primary data file. Accepts optional 'fields' JSON array for multi-field extraction."""
     try:
@@ -3268,6 +3960,18 @@ async def generate_primary(
             sales_amount_column=sales_amount_column,
             fields=parsed_fields
         )
+        
+        cid, mid = _get_context(current_user)
+        from database import add_notification
+        add_notification(
+            company_id=cid, 
+            module_id=mid, 
+            notif_type='success', 
+            message=f"Primary file generated successfully. {result['total_unique']} unique values found.", 
+            link=None, 
+            user_id=current_user.get('user_id') if current_user else None
+        )
+        
         return {
             "success": True,
             "message": f"Primary data generated successfully. {result['total_unique']} unique values found.",
@@ -4778,6 +5482,12 @@ def process_rules_background():
             elif summary_sheets:
                 summary_msg += f" {len(summary_sheets)} summaries generated."
             
+            from database import add_notification
+            if phase4_errors:
+                add_notification(cid, mid, 'warning', f"Processing completed with warnings: {len(phase4_errors)} summaries skipped due to missing columns.", "?page=processed")
+            else:
+                add_notification(cid, mid, 'success', f"Processing completed successfully. {len(summary_sheets)} summaries generated.", "?page=processed")
+            
             processing_status["result"] = {
                 "success": True,
                 "message": summary_msg,
@@ -4804,6 +5514,11 @@ def process_rules_background():
         error_msg = f"Processing error: {str(e)}\n{traceback.format_exc()}"
         logger.error(error_msg)
         with processing_lock:
+            from database import add_notification
+            cid = processing_status.get("company_id")
+            mid = processing_status.get("module_id")
+            if cid and mid:
+                add_notification(cid, mid, 'error', f"Processing failed: {str(e)[:100]}...", "?page=process")
             processing_status["error"] = str(e)
             processing_status["result"] = {"success": False, "message": str(e)}
             processing_status["progress"] = "error"
@@ -4855,6 +5570,7 @@ async def get_primary_source_files(current_user: Optional[dict] = Depends(get_op
 async def process_all_rules(
     selected_source_files: Optional[str] = Form(None),
     custom_filename: Optional[str] = Form(None),
+    force: bool = Form(False),
     current_user: Optional[dict] = Depends(get_optional_user)
 ):
     """Start processing in background with optional source file filter"""
@@ -4870,8 +5586,77 @@ async def process_all_rules(
         except:
             filter_sources = None
     
+
     cid, mid = _get_context(current_user)
     
+    # --- NEW: Pre-flight Validation ---
+    if not force:
+        try:
+            conn = get_db_connection()
+            if cid is not None and mid is not None:
+                all_rules = conn.execute("SELECT * FROM rules WHERE company_id = ? AND module_id = ? ORDER BY phase, id", (cid, mid)).fetchall()
+            else:
+                all_rules = conn.execute("SELECT * FROM rules ORDER BY phase, id").fetchall()
+            conn.close()
+            
+            p1 = [dict(r) for r in all_rules if r['phase'] == 1]
+            p2 = [dict(r) for r in all_rules if r['phase'] == 2]
+            p3 = [dict(r) for r in all_rules if r['phase'] == 3]
+            p4 = [dict(r) for r in all_rules if r['phase'] == 4]
+            
+            p1_rules = p1[-1] if p1 else None
+            p2_rules = p2[-1] if p2 else None
+            p3_rules = p3[-1] if p3 else None
+            
+            generated_cols = {'Unique_ID', 'Source_File_Name', 'Order ID', 'Sales Amount'}
+            
+            if p1_rules:
+                try:
+                    c1 = json.loads(p1_rules['config'])
+                    generated_cols.add(c1.get('column', 'Order ID'))
+                    for f in c1.get('fields', []):
+                        if f.get('name'): generated_cols.add(f['name'])
+                except: pass
+                
+            if p2_rules:
+                try:
+                    c2 = json.loads(p2_rules['config'])
+                    for r in c2:
+                        if r.get('column_name'): generated_cols.add(r['column_name'])
+                except: pass
+                
+            if p3_rules:
+                try:
+                    c3 = json.loads(p3_rules['config'])
+                    for g in c3:
+                        if g.get('column_name'): generated_cols.add(g['column_name'])
+                except: pass
+                
+            required_cols = set()
+            for r in p4:
+                try:
+                    c4 = json.loads(r['config'])
+                    for f in c4.get('value_fields', []):
+                        if f.get('column'): required_cols.add(f['column'])
+                    for f in c4.get('row_fields', []):
+                        if f: required_cols.add(f)
+                    for f in c4.get('column_fields', []):
+                        if f: required_cols.add(f)
+                except: pass
+                
+            missing = required_cols - generated_cols
+            if missing:
+                return {
+                    "success": False,
+                    "type": "validation_warning",
+                    "missing_columns": list(missing),
+                    "message": "Validation warning"
+                }
+        except Exception as e:
+            logger.error(f"Validation error: {e}")
+            # Ignore validation errors and proceed
+    # --- END Validation ---
+
     with processing_lock:
         if processing_status["is_processing"]:
             return {
