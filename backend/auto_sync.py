@@ -251,6 +251,16 @@ def run_incremental_sync(folder_id: int, force_sync: bool = False):
             # Running UPDATE on the whole table in DuckDB is lightning fast, so we just run it on all rows to be safe.
             if files_to_add:
                 reapply_formulas(duck_conn, folder_id, company_id, module_id)
+
+            # 4. RE-APPLY ALL SAVED ACTIVITIES
+            # Run the full apply_activities() engine so Formula, Find & Replace, Column Rename,
+            # and Column Delete activities (stored in master_activities) survive incremental sync
+            # (file add OR delete). Wrapped in try/except so a single bad activity doesn't break sync.
+            if files_to_add or files_to_remove:
+                try:
+                    apply_activities(duck_conn, folder_id, company_id, module_id)
+                except Exception as act_e:
+                    logger.warning(f"apply_activities during incremental sync failed: {act_e}")
                 
         finally:
             duck_conn.close()
