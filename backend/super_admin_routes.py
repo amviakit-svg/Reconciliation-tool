@@ -23,7 +23,7 @@ from auth import (
 )
 from database import (
     get_companies, get_company_by_id, get_company_by_code, create_company, update_company, delete_company,
-    get_modules, get_module_by_id, get_module_by_code,
+    get_modules, get_module_by_id, get_module_by_code, set_module_template, clone_company_module,
     assign_module_to_company, get_company_modules, remove_module_from_company,
     get_company_users, create_user, update_user, delete_user,
     get_all_settings, set_setting,
@@ -144,7 +144,8 @@ async def create_new_company(
     
     # Assign modules
     assigned_modules = []
-    module_id_list = []
+    storage_warnings = []
+    storage_result = None
     try:
         module_id_list = [int(m.strip()) for m in module_ids.split(',') if m.strip()]
         for mid in module_id_list:
@@ -152,17 +153,26 @@ async def create_new_company(
             if module:
                 assign_module_to_company(company_id, mid)
                 assigned_modules.append(module['name'])
+                
+                # Clone template if configured
+                cloned = False
+                if module.get('template_company_id') and module['template_company_id'] != company_id:
+                    try:
+                        clone_company_module(module['template_company_id'], company_id, mid)
+                        cloned = True
+                    except Exception as e:
+                        logger.error(f"Failed to clone template for module {mid} to new company {company_id}: {e}")
+                        storage_warnings.append({"suggestion": f"Module {mid} assigned, but template cloning failed: {e}"})
+                
+                if not cloned:
+                    storage_result = create_company_file_structure(company_id, [mid])
+                    if not storage_result.get("success"):
+                        storage_warnings.extend(storage_result.get("errors", []))
     except ValueError:
         pass
     
-    # Auto-create physical folder structure for company modules
-    storage_result = None
-    storage_warnings = []
-    if module_id_list:
-        storage_result = create_company_file_structure(company_id, module_id_list)
-        if not storage_result.get("success"):
-            storage_warnings = storage_result.get("errors", [])
-            logger.warning(f"Folder creation had issues for company '{name}': {storage_warnings}")
+    if storage_warnings:
+        logger.warning(f"Folder creation had issues for company '{name}': {storage_warnings}")
     
     save_audit_log(
         user_id=current_user['user_id'],
@@ -429,6 +439,75 @@ async def create_module(
         conn.close()
 
 
+@router.post("/modules/{module_id}/template")
+async def set_module_template_route(
+    request: Request,
+    module_id: int,
+    template_company_id: Optional[int] = Form(None),
+    current_user: dict = Depends(require_super_admin)
+):
+    """Set the default template company for a module."""
+    module = get_module_by_id(module_id)
+    if not module:
+        raise HTTPException(status_code=404, detail="Module not found")
+        
+    if template_company_id:
+        company = get_company_by_id(template_company_id)
+        if not company:
+            raise HTTPException(status_code=404, detail="Company not found")
+            
+    set_module_template(module_id, template_company_id)
+    
+    save_audit_log(
+        user_id=current_user['user_id'],
+        user_role='super_admin',
+        action='SET_MODULE_TEMPLATE',
+        entity_type='module',
+        entity_id=module_id,
+        details=f"Set template company to {template_company_id} for module {module['name']}",
+        ip_address=request.client.host if request.client else None
+    )
+    
+    return {
+        "success": True,
+        "message": "Module template updated successfully"
+    }
+
+
+@router.post("/modules/{module_id}/readme")
+async def update_module_readme(
+    request: Request,
+    module_id: int,
+    readme_content: str = Form(""),
+    current_user: dict = Depends(require_super_admin)
+):
+    """Update the readme markdown for a module."""
+    module = get_module_by_id(module_id)
+    if not module:
+        raise HTTPException(status_code=404, detail="Module not found")
+        
+    conn = get_db_connection()
+    conn.execute('UPDATE modules SET readme_content = ? WHERE id = ?', (readme_content, module_id))
+    conn.commit()
+    conn.close()
+    
+    save_audit_log(
+        user_id=current_user['user_id'],
+        user_role='super_admin',
+        action='UPDATE_MODULE_README',
+        entity_type='module',
+        entity_id=module_id,
+        details=f"Updated readme for module {module['name']}",
+        ip_address=request.client.host if request.client else None
+    )
+    
+    return {
+        "success": True,
+        "message": "Module readme updated successfully"
+    }
+
+
+
 @router.post("/companies/{company_id}/modules/{module_id}")
 async def assign_module(
     request: Request,
@@ -447,14 +526,34 @@ async def assign_module(
     
     client_ip = request.client.host if request.client else None
     
+    # Check if already assigned
+    existing_modules = get_company_modules(company_id)
+    is_new_assignment = not any(m['id'] == module_id for m in existing_modules)
+    
     assign_module_to_company(company_id, module_id)
     
-    # Auto-create folder structure for this module
-    storage_result = create_company_file_structure(company_id, [module_id])
+    # If this is a new assignment AND there is a template company, clone the configuration
+    cloned = False
     storage_warning = None
-    if not storage_result.get("success"):
-        storage_warning = storage_result.get("errors", [])
-        logger.warning(f"Folder creation failed for module assignment: company={company_id}, module={module_id}: {storage_warning}")
+    
+    if is_new_assignment and module.get('template_company_id') and module['template_company_id'] != company_id:
+        try:
+            clone_company_module(module['template_company_id'], company_id, module_id)
+            cloned = True
+        except Exception as e:
+            logger.error(f"Failed to clone template for module {module_id} to company {company_id}: {e}")
+            storage_warning = [{"suggestion": f"Module assigned, but template cloning failed: {e}"}]
+            
+            # Fallback to create normal structure
+            storage_result = create_company_file_structure(company_id, [module_id])
+            if not storage_result.get("success"):
+                storage_warning = storage_result.get("errors", [])
+    else:
+        # Auto-create folder structure for this module if not cloning
+        storage_result = create_company_file_structure(company_id, [module_id])
+        if not storage_result.get("success"):
+            storage_warning = storage_result.get("errors", [])
+            logger.warning(f"Folder creation failed for module assignment: company={company_id}, module={module_id}: {storage_warning}")
     
     save_audit_log(
         user_id=current_user['user_id'],
@@ -462,14 +561,14 @@ async def assign_module(
         action='ASSIGN_MODULE',
         entity_type='company_module',
         entity_id=company_id,
-        details=f'Assigned module {module["name"]} to company {company["name"]}',
+        details=f"Assigned module {module['name']} to company {company['name']}{' (with template clone)' if cloned else ''}",
         company_id=company_id,
         ip_address=client_ip
     )
     
     response = {
         "success": True,
-        "message": f"Module '{module['name']}' assigned to company '{company['name']}'"
+        "message": f"Module '{module['name']}' assigned to company '{company['name']}'" + (" (Cloned from Template)" if cloned else "")
     }
     
     if storage_warning:

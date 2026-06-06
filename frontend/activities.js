@@ -174,17 +174,17 @@ async function deleteActivity(id) {
 }
 
 async function testActivity(id) {
-    showToast('Running dry-run test…', 'info', 1500);
+    showToast('Running dry-run test…', 'info');
     try {
         const data = await apiCall(`/api/master/${currentFolderId}/activities/${id}/test`, { method: 'POST' });
         if (data.success) {
-            showToast(`✓ Test passed — ${data.rows_affected || 0} rows affected`, 'success');
+            showToast(`✓ Test passed`, 'success');
         } else {
-            showToast(`Test failed: ${data.error || 'unknown error'}`, 'error', 6000);
+            showToast(`Test failed: ${data.message || data.error || 'unknown error'}`, 'error', data.suggestion || null);
         }
         await loadMasterActivities();
     } catch (e) {
-        showToast('Test failed: ' + e.message, 'error', 6000);
+        showToast('Test failed: ' + e.message, 'error');
     }
 }
 

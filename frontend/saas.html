@@ -880,6 +880,58 @@
     </div>
 </div>
 
+<!-- Template Modal -->
+<div id="template-modal" class="fixed inset-0 z-50 hidden">
+    <div class="modal-overlay absolute inset-0" onclick="closeTemplateModal()"></div>
+    <div class="absolute inset-0 flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-md">
+            <div class="p-6 border-b border-gray-200 flex items-center justify-between">
+                <h3 class="text-lg font-semibold">Set Default Template</h3>
+                <button onclick="closeTemplateModal()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times"></i></button>
+            </div>
+            <form id="template-form" onsubmit="saveTemplate(event)" class="p-6 space-y-4">
+                <input type="hidden" id="template-module-id">
+                <div>
+                    <p class="text-sm text-gray-600 mb-3">Select a company to act as the default template for the <strong id="template-module-name"></strong> module. When this module is assigned to a new company, its folders, files, and rules will be cloned from the selected company.</p>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Template Company</label>
+                    <select id="template-company-select" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none">
+                        <option value="">None (Empty Module)</option>
+                    </select>
+                </div>
+                <div class="flex justify-end gap-3 pt-4">
+                    <button type="button" onclick="closeTemplateModal()" class="px-4 py-2 rounded-lg border border-gray-300 hover:bg-gray-50">Cancel</button>
+                    <button type="submit" class="btn-primary px-4 py-2 rounded-lg">Save Template</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Readme Modal -->
+<div id="readme-modal" class="fixed inset-0 z-50 hidden">
+    <div class="modal-overlay absolute inset-0" onclick="closeReadmeModal()"></div>
+    <div class="absolute inset-0 flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-4xl" style="height: 80vh; display: flex; flex-direction: column;">
+            <div class="p-6 border-b border-gray-200 flex items-center justify-between shrink-0">
+                <h3 class="text-lg font-semibold">Edit Readme Template - <span id="readme-module-name"></span></h3>
+                <button onclick="closeReadmeModal()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times"></i></button>
+            </div>
+            <form id="readme-form" onsubmit="saveReadme(event)" class="flex-1 flex flex-col p-6 overflow-hidden">
+                <input type="hidden" id="readme-module-id">
+                <div class="flex-1 flex flex-col min-h-0">
+                    <p class="text-sm text-gray-600 mb-3 shrink-0">Write markdown instructions for this module. This readme will be visible to all client companies assigned to this module.</p>
+                    <textarea id="readme-content" class="flex-1 w-full p-4 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 font-mono text-sm outline-none resize-none" placeholder="# Module Instructions\n\nExplain upload steps, mandatory columns, etc..."></textarea>
+                </div>
+                <div class="flex justify-end gap-3 pt-4 shrink-0">
+                    <button type="button" onclick="closeReadmeModal()" class="px-4 py-2 rounded-lg border border-gray-300 hover:bg-gray-50">Cancel</button>
+                    <button type="submit" class="btn-primary px-4 py-2 rounded-lg">Save Readme</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+
 <!-- Role Modal -->
 <div id="role-modal" class="fixed inset-0 z-50 hidden">
     <div class="modal-overlay absolute inset-0" onclick="closeRoleModal()"></div>
@@ -1477,16 +1529,69 @@ async function loadModules() {
         const data = await api('/api/super-admin/modules');
         const grid = document.getElementById('modules-grid');
         grid.innerHTML = data.modules.map(m => `
-            <div class="card p-5">
+            <div class="card p-5 relative">
                 <div class="flex items-start justify-between mb-3">
                     <div class="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center"><i class="fas fa-cube text-blue-600"></i></div>
-                    <span class="badge badge-blue text-xs">${m.code}</span>
+                    <div class="flex gap-2">
+                        ${m.template_company_id ? `<span class="badge badge-green text-xs" title="Template: ${m.template_company_name}"><i class="fas fa-star mr-1"></i>Template Set</span>` : ''}
+                        <span class="badge badge-blue text-xs">${m.code}</span>
+                    </div>
                 </div>
                 <h4 class="font-semibold text-gray-900">${m.name}</h4>
                 <p class="text-sm text-gray-500 mt-1">${m.description || 'No description'}</p>
-                <p class="text-xs text-gray-400 mt-3">Created ${new Date(m.created_at).toLocaleDateString()}</p>
+                <div class="flex items-center justify-between mt-4 border-t border-gray-100 pt-3">
+                    <p class="text-xs text-gray-400">Created ${new Date(m.created_at).toLocaleDateString()}</p>
+                    <div class="flex gap-3">
+                        <button onclick="openReadmeModal(${m.id}, '${m.name.replace(/'/g, "\\'")}', \`${m.readme_content || ''}\`)" class="text-xs text-purple-600 hover:text-purple-800 font-medium">Edit Readme</button>
+                        <button onclick="openTemplateModal(${m.id}, '${m.name.replace(/'/g, "\\'")}', ${m.template_company_id || null})" class="text-xs text-blue-600 hover:text-blue-800 font-medium">Set Template</button>
+                    </div>
+                </div>
             </div>
         `).join('') || '<div class="col-span-3 text-center py-8 text-gray-500">No modules found</div>';
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+async function openTemplateModal(moduleId, moduleName, currentTemplateId) {
+    document.getElementById('template-module-id').value = moduleId;
+    document.getElementById('template-module-name').textContent = moduleName;
+    
+    // Load companies into the dropdown
+    try {
+        const data = await api('/api/super-admin/companies?status=active');
+        const select = document.getElementById('template-company-select');
+        select.innerHTML = '<option value="">None (Empty Module)</option>' + 
+            data.companies.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+            
+        if (currentTemplateId) {
+            select.value = currentTemplateId;
+        }
+    } catch (err) {
+        showToast('Failed to load companies: ' + err.message, 'error');
+    }
+    
+    document.getElementById('template-modal').classList.remove('hidden');
+}
+
+function closeTemplateModal() {
+    document.getElementById('template-modal').classList.add('hidden');
+    document.getElementById('template-form').reset();
+}
+
+async function saveTemplate(e) {
+    e.preventDefault();
+    const moduleId = document.getElementById('template-module-id').value;
+    const companyId = document.getElementById('template-company-select').value;
+    
+    try {
+        const formData = new FormData();
+        if (companyId) formData.append('template_company_id', companyId);
+        
+        const data = await api(`/api/super-admin/modules/${moduleId}/template`, { method: 'POST', body: formData });
+        showToast(data.message, 'success');
+        closeTemplateModal();
+        loadModules(); // Reload to update UI
     } catch (err) {
         showToast(err.message, 'error');
     }

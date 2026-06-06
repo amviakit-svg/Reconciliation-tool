@@ -394,8 +394,15 @@ def get_excel_info_fast(file_path):
             
             return 1, data_rows, total_cols, json.dumps(["Sheet1"])
         except Exception as e:
-            logger.error(f"CSV parsing error: {e}")
-            return 0, 0, 0, "[]"
+            logger.warning(f"Fast CSV parsing error: {e}. Falling back to pandas...")
+            try:
+                import pandas as pd
+                # Fallback to pandas which handles weird encodings better
+                df = pd.read_csv(file_path, on_bad_lines='skip')
+                return 1, len(df), len(df.columns), json.dumps(["Sheet1"])
+            except Exception as e2:
+                logger.error(f"CSV info fallback error: {e2}")
+                return 0, 0, 0, "[]"
     
     # Handle Excel files - optimized with read_only
     try:
@@ -418,8 +425,31 @@ def get_excel_info_fast(file_path):
         wb.close()
         return sheet_count, total_rows, total_cols, json.dumps(sheet_names)
     except Exception as e:
-        logger.error(f"Excel info error: {e}")
-        return 0, 0, 0, "[]"
+        logger.warning(f"openpyxl failed to read {file_path} ({e}). Falling back to pandas...")
+        try:
+            import pandas as pd
+            # Use pandas ExcelFile to get sheet names and dimensions
+            xl = pd.ExcelFile(file_path)
+            sheet_names = xl.sheet_names
+            sheet_count = len(sheet_names)
+            
+            total_rows = 0
+            total_cols = 0
+            
+            for sheet in sheet_names:
+                df = pd.read_excel(xl, sheet_name=sheet, nrows=0) # Just read headers
+                cols = len(df.columns)
+                if cols > total_cols:
+                    total_cols = cols
+                
+                # To get row count without loading whole df into memory, we might just load it
+                df_full = pd.read_excel(xl, sheet_name=sheet)
+                total_rows += len(df_full)
+                
+            return sheet_count, total_rows, total_cols, json.dumps(sheet_names)
+        except Exception as e2:
+            logger.error(f"Excel info fallback error: {e2}")
+            return 0, 0, 0, "[]"
 
 
 # ============ OPTIMIZED AUTO-FIT (SAMPLED) ============
@@ -1583,15 +1613,20 @@ async def get_master_config(folder_id: int = Query(...)):
                     "concat_columns": row[1],
                     "sheet_name": row[2],
                     "header_row": row[3],
-                    "updated_at": updated_at
+                    "updated_at": updated_at,
+                    "auto_sync": auto_sync
                 }
             }
+            
+        # Even if config row is missing, we might have an auto_sync setting in master_files
+        if master_row:
+            return {"success": True, "config": {"auto_sync": auto_sync}}
+            
         logger.debug(f"No master config found for folder {folder_id}")
         return {"success": True, "config": None}
     except Exception as e:
         logger.error(f"Get master config error for folder {folder_id}: {e}")
         return get_error_response("db_connection")
-
 
 @app.post("/api/master/config")
 async def save_master_config(
@@ -1831,6 +1866,7 @@ async def get_master_info(folder_id: int, current_user: Optional[dict] = Depends
     
     # Also fetch saved config for this folder
     saved_config = None
+    auto_sync = 0
     try:
         conn = get_db_connection()
         conn.execute('''
@@ -1849,7 +1885,12 @@ async def get_master_info(folder_id: int, current_user: Optional[dict] = Depends
             "SELECT columns, concat_columns, sheet_name, header_row, updated_at FROM master_file_configs WHERE folder_id = ?",
             (folder_id,)
         ).fetchone()
+        
+        master_row = conn.execute("SELECT auto_sync FROM master_files WHERE folder_id = ?", (folder_id,)).fetchone()
+        if master_row:
+            auto_sync = master_row[0]
         conn.close()
+        
         if row:
             updated_at = row[4]
             try:
@@ -1863,10 +1904,19 @@ async def get_master_info(folder_id: int, current_user: Optional[dict] = Depends
                 "concat_columns": row[1],
                 "sheet_name": row[2],
                 "header_row": row[3],
-                "updated_at": updated_at
+                "updated_at": updated_at,
+                "auto_sync": auto_sync
             }
+        elif master_row:
+            saved_config = {"auto_sync": auto_sync}
+            
     except Exception as e:
         logger.warning(f"Could not fetch saved config for folder {folder_id}: {e}")
+        try:
+            conn.close()
+        except:
+            pass
+
     
     try:
         conn = duckdb.connect(master['db_path'], read_only=True)
@@ -3912,24 +3962,31 @@ async def api_test_activity(
             preview["after_sample"] = after_rows
             preview["affected_columns"] = scope
 
-        elif act_type == 'FORMULA_ADD':
+        elif act_type in ('FORMULA_ADD', 'FORMULA_UPDATE'):
             expr = payload.get('expression') or ''
+            sql_expr = payload.get('sql') or ''
             out_col = payload.get('output_column') or existing.get('target_column')
-            validation = validate_formula(expr, existing_cols)
-            if not validation["valid"]:
-                return {
-                    "success": False,
-                    "message": validation["error"],
-                    "suggestion": validation.get("suggestion", ""),
-                    "preview": preview
-                }
-            sql_expr = validation["sql"]
+            
+            if not expr and sql_expr:
+                # Already parsed SQL from vlookup/sumif
+                pass
+            else:
+                validation = validate_formula(expr, existing_cols)
+                if not validation["valid"]:
+                    return {
+                        "success": False,
+                        "message": validation["error"],
+                        "suggestion": validation.get("suggestion", ""),
+                        "preview": preview
+                    }
+                sql_expr = validation["sql"]
+                
             preview["sql"] = sql_expr
             preview["output_column"] = out_col
             try:
                 conn_rw = duckdb.connect(master['db_path'], read_only=True)
                 try:
-                    q = f"SELECT {sql_expr} as result FROM master_data LIMIT 5"
+                    q = f"SELECT ({sql_expr}) as result FROM master_data LIMIT 5"
                     r = conn_rw.execute(q).fetchdf()
                     preview["after_sample"] = clean_nan_values(r['result'].tolist())
                 finally:

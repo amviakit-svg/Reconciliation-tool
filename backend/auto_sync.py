@@ -481,16 +481,130 @@ def _ensure_column(duck_conn, table: str, column: str, data_type: str = 'VARCHAR
     duck_conn.execute(f"ALTER TABLE {table} ADD COLUMN {_safe_sql_ident(column)} {data_type}")
 
 
-def _apply_formula_activity(duck_conn, act):
+def _apply_formula_activity(duck_conn, act, company_id=None, module_id=None):
     """FORMULA_ADD: ensure the column exists, then UPDATE with parsed formula SQL."""
     payload = act.get('payload') or {}
-    expression = payload.get('expression') or payload.get('sql') or ''
     col_name = act.get('target_column') or payload.get('output_column') or payload.get('column_name')
     if not col_name:
         raise ValueError("FORMULA_ADD missing target_column / output_column")
-    if not expression:
-        raise ValueError("FORMULA_ADD missing expression / sql")
+        
+    formula_type = payload.get('formula_type', '').upper()
     col_ident = _safe_sql_ident(col_name)
+    
+    # --- Mathematical and String Formulas ---
+    if formula_type in ('SUM', '-SUM', 'SUBTRACT', 'MULTIPLY', 'DIVIDE', 'PERCENTAGE', 'ABS', 'CONCAT'):
+        cols = payload.get('source_columns') or []
+        if formula_type == 'SUM':
+            if len(cols) < 1: raise ValueError("SUM requires at least 1 column")
+            expr = ' + '.join(f'TRY_CAST({_safe_sql_ident(c)} AS DOUBLE)' for c in cols)
+            _ensure_column(duck_conn, 'master_data', col_name, 'DOUBLE')
+        elif formula_type == '-SUM':
+            if len(cols) < 1: raise ValueError("-SUM requires at least 1 column")
+            expr = '-(' + ' + '.join(f'TRY_CAST({_safe_sql_ident(c)} AS DOUBLE)' for c in cols) + ')'
+            _ensure_column(duck_conn, 'master_data', col_name, 'DOUBLE')
+        elif formula_type == 'SUBTRACT':
+            if len(cols) != 2: raise ValueError("SUBTRACT requires exactly 2 columns")
+            expr = f'TRY_CAST({_safe_sql_ident(cols[0])} AS DOUBLE) - TRY_CAST({_safe_sql_ident(cols[1])} AS DOUBLE)'
+            _ensure_column(duck_conn, 'master_data', col_name, 'DOUBLE')
+        elif formula_type == 'MULTIPLY':
+            if len(cols) != 2: raise ValueError("MULTIPLY requires exactly 2 columns")
+            expr = f'TRY_CAST({_safe_sql_ident(cols[0])} AS DOUBLE) * TRY_CAST({_safe_sql_ident(cols[1])} AS DOUBLE)'
+            _ensure_column(duck_conn, 'master_data', col_name, 'DOUBLE')
+        elif formula_type == 'DIVIDE':
+            if len(cols) != 2: raise ValueError("DIVIDE requires exactly 2 columns")
+            expr = f'CASE WHEN TRY_CAST({_safe_sql_ident(cols[1])} AS DOUBLE) = 0 OR TRY_CAST({_safe_sql_ident(cols[1])} AS DOUBLE) IS NULL THEN 0 ELSE TRY_CAST({_safe_sql_ident(cols[0])} AS DOUBLE) / TRY_CAST({_safe_sql_ident(cols[1])} AS DOUBLE) END'
+            _ensure_column(duck_conn, 'master_data', col_name, 'DOUBLE')
+        elif formula_type == 'PERCENTAGE':
+            if len(cols) != 2: raise ValueError("PERCENTAGE requires exactly 2 columns")
+            expr = f'CASE WHEN TRY_CAST({_safe_sql_ident(cols[1])} AS DOUBLE) = 0 OR TRY_CAST({_safe_sql_ident(cols[1])} AS DOUBLE) IS NULL THEN 0 ELSE (TRY_CAST({_safe_sql_ident(cols[0])} AS DOUBLE) / TRY_CAST({_safe_sql_ident(cols[1])} AS DOUBLE)) * 100 END'
+            _ensure_column(duck_conn, 'master_data', col_name, 'DOUBLE')
+        elif formula_type == 'ABS':
+            if len(cols) != 1: raise ValueError("ABS requires exactly 1 column")
+            expr = f'ABS(TRY_CAST({_safe_sql_ident(cols[0])} AS DOUBLE))'
+            _ensure_column(duck_conn, 'master_data', col_name, 'DOUBLE')
+        elif formula_type == 'CONCAT':
+            if len(cols) < 2: raise ValueError("CONCAT requires at least 2 columns")
+            separator = payload.get('constant_value')
+            if separator is None: separator = ' '
+            expr = f" || '{_sql_escape(separator)[1:-1]}' || ".join(f"COALESCE(CAST({_safe_sql_ident(c)} AS VARCHAR), '')" for c in cols)
+            _ensure_column(duck_conn, 'master_data', col_name, 'VARCHAR')
+            
+        duck_conn.execute(f"UPDATE master_data SET {col_ident} = ({expr})")
+        return
+
+    # --- Lookups and Aggregations ---
+    if formula_type in ('SUMIF', 'COUNTIF', 'VLOOKUP', 'HLOOKUP'):
+        if not company_id or not module_id:
+            company_id = act.get('company_id')
+            module_id = act.get('module_id')
+        pcol = payload.get('primary_column')
+        sec_file_id = payload.get('secondary_file')
+        sec_sheet = payload.get('secondary_sheet')
+        sec_match = payload.get('secondary_match_column')
+        sec_val = payload.get('secondary_value_column')
+        
+        resolved = resolve_primary_file_for_formula(sec_file_id, company_id, module_id)
+        if not resolved['success'] or not os.path.exists(resolved['path']):
+            raise ValueError(f"Could not resolve secondary file {sec_file_id}")
+            
+        sec_path = resolved['path']
+        is_csv = sec_path.lower().endswith('.csv')
+        match_type = payload.get('match_type') or 'exact'
+        
+        if is_csv:
+            sec_table = f"read_csv_auto('{sec_path}')"
+        else:
+            sec_table = f"st_read('{sec_path}', layer='{sec_sheet}')"
+            
+        if match_type == 'exact':
+            join_cond = f"CAST(s.{_safe_sql_ident(sec_match)} AS VARCHAR) = CAST(master_data.{_safe_sql_ident(pcol)} AS VARCHAR)"
+        else:
+            join_cond = f"CAST(master_data.{_safe_sql_ident(pcol)} AS VARCHAR) LIKE '%' || CAST(s.{_safe_sql_ident(sec_match)} AS VARCHAR) || '%'"
+
+        if formula_type == 'SUMIF':
+            _ensure_column(duck_conn, 'master_data', col_name, 'DOUBLE')
+            query = f'''
+                UPDATE master_data 
+                SET {col_ident} = (
+                    SELECT COALESCE(SUM(TRY_CAST(s.{_safe_sql_ident(sec_val)} AS DOUBLE)), 0)
+                    FROM {sec_table} AS s
+                    WHERE {join_cond}
+                )
+            '''
+        elif formula_type == 'COUNTIF':
+            _ensure_column(duck_conn, 'master_data', col_name, 'INTEGER')
+            count_col = payload.get('count_column')
+            if count_col:
+                count_expr = f'COUNT(s.{_safe_sql_ident(count_col)})'
+            else:
+                count_expr = 'COUNT(*)'
+            query = f'''
+                UPDATE master_data 
+                SET {col_ident} = (
+                    SELECT {count_expr}
+                    FROM {sec_table} AS s
+                    WHERE {join_cond}
+                )
+            '''
+        elif formula_type in ('VLOOKUP', 'HLOOKUP'):
+            _ensure_column(duck_conn, 'master_data', col_name, 'VARCHAR')
+            query = f'''
+                UPDATE master_data 
+                SET {col_ident} = (
+                    SELECT s.{_safe_sql_ident(sec_val)}
+                    FROM {sec_table} AS s
+                    WHERE {join_cond}
+                    LIMIT 1
+                )
+            '''
+        duck_conn.execute(query)
+        return
+
+    # --- Fallback to plain Expression / SQL ---
+    expression = payload.get('expression') or payload.get('sql') or ''
+    if not expression:
+        raise ValueError(f"FORMULA_ADD missing expression for type {formula_type}")
+    
     _ensure_column(duck_conn, 'master_data', col_name, 'DOUBLE')
     try:
         duck_conn.execute(f"UPDATE master_data SET {col_ident} = ({expression})")
@@ -499,9 +613,9 @@ def _apply_formula_activity(duck_conn, act):
         duck_conn.execute(f"UPDATE master_data SET {col_ident} = TRY_CAST(({expression}) AS DOUBLE)")
 
 
-def _apply_formula_update_activity(duck_conn, act):
+def _apply_formula_update_activity(duck_conn, act, company_id=None, module_id=None):
     """FORMULA_UPDATE: update an existing column with a new expression."""
-    return _apply_formula_activity(duck_conn, act)
+    return _apply_formula_activity(duck_conn, act, company_id, module_id)
 
 
 def _apply_find_replace_activity(duck_conn, act):
@@ -675,9 +789,9 @@ def apply_activities(duck_conn, folder_id, company_id, module_id):
         act_type = (act.get('activity_type') or '').upper()
         try:
             if act_type == 'FORMULA_ADD':
-                _apply_formula_activity(duck_conn, act)
+                _apply_formula_activity(duck_conn, act, company_id, module_id)
             elif act_type == 'FORMULA_UPDATE':
-                _apply_formula_update_activity(duck_conn, act)
+                _apply_formula_update_activity(duck_conn, act, company_id, module_id)
             elif act_type == 'FIND_REPLACE':
                 _apply_find_replace_activity(duck_conn, act)
             elif act_type == 'COLUMN_RENAME':

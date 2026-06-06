@@ -24,6 +24,7 @@
         })();
     </script>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         body { font-family: 'Inter', sans-serif; }
@@ -151,6 +152,9 @@
                         </svg>
                     </div>
                     <h1 class="text-xl font-bold text-gray-900">Reconciliation Tool</h1>
+                    <button onclick="showModuleInstructions()" class="ml-4 px-3 py-1 bg-purple-50 text-purple-700 text-sm font-medium rounded-lg border border-purple-200 hover:bg-purple-100 transition-colors hidden" id="module-instructions-btn">
+                        <i class="fas fa-book mr-1"></i> Module Instructions
+                    </button>
                 </div>
                 <nav class="flex space-x-1">
                     <button onclick="switchTab('dashboard')" id="tab-dashboard" class="tab-active px-4 py-5 text-sm font-medium transition-colors">Dashboard</button>
@@ -1513,6 +1517,28 @@
         </div>
     </div>
 
+    <!-- Module Instructions Modal -->
+    <div id="module-instructions-modal" class="modal-overlay fixed inset-0 z-[60] hidden items-center justify-center" style="display:none;">
+        <div class="bg-white rounded-xl shadow-xl w-full max-w-4xl mx-4 max-h-[90vh] flex flex-col">
+            <div class="p-6 border-b border-gray-200 flex items-center justify-between shrink-0">
+                <h3 class="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                    <i class="fas fa-book text-purple-600"></i> Module Instructions
+                </h3>
+                <button onclick="closeModuleInstructions()" class="text-gray-400 hover:text-gray-600">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+            <div class="p-6 overflow-y-auto flex-1 prose max-w-none" id="module-instructions-content">
+                <!-- Content injected here -->
+            </div>
+            <div class="p-6 border-t border-gray-200 shrink-0 flex justify-end">
+                <button onclick="closeModuleInstructions()" class="px-4 py-2 text-sm font-medium bg-gray-100 text-gray-800 rounded-lg hover:bg-gray-200 transition-colors">Close</button>
+            </div>
+        </div>
+    </div>
+
     <!-- ==================== ACTIVITY VIEWER MODAL (unused for now, viewer is in master-view-panel) ==================== -->
 
     <!-- ==================== ACTIVITIES.JS HELPER LIBRARY ==================== -->
@@ -2663,7 +2689,7 @@
                 }
             } catch (error) {
                 document.getElementById('view-master-btn').classList.add('hidden');
-            document.getElementById('sync-now-btn').classList.add('hidden');
+                document.getElementById('sync-now-btn').classList.add('hidden');
             }
         }
 
@@ -8292,8 +8318,68 @@
             }
         }
 
+        function showModuleInstructions() {
+            const modal = document.getElementById('module-instructions-modal');
+            modal.style.display = 'flex';
+            modal.classList.remove('hidden');
+        }
+
+        function closeModuleInstructions() {
+            const modal = document.getElementById('module-instructions-modal');
+            modal.style.display = 'none';
+            modal.classList.add('hidden');
+        }
+
+        // Setup company and module names at the top
+        async function loadCompanyAndModuleName() {
+            const companyId = localStorage.getItem('company_id');
+            const moduleId = localStorage.getItem('module_id');
+            if(companyId) {
+                // Fetch user data directly from saas API for company/module details
+                try {
+                    // Quick check to the new lightweight endpoint or we fetch /auth/me
+                    // Wait, we can fetch /api/saas/modules?company_id=...
+                    // Better yet, just wait to load it since we just need readme
+                } catch(e) {}
+            }
+        }
+        
+        // Let's actually fetch the current module to get its Readme
+        async function loadCurrentModuleReadme() {
+            const companyId = localStorage.getItem('company_id');
+            const moduleId = localStorage.getItem('module_id');
+            if(!companyId || !moduleId) return;
+            
+            try {
+                // We'll use the user's available modules to find this one
+                const res = await api('/api/auth/me');
+                if (res.user && res.user.role === 'admin' && res.user.company_id == companyId) {
+                    const modulesRes = await api('/api/company/modules');
+                    const mod = modulesRes.modules.find(m => m.id == moduleId);
+                    if (mod && mod.readme_content) {
+                        const btn = document.getElementById('module-instructions-btn');
+                        btn.classList.remove('hidden');
+                        document.getElementById('module-instructions-content').innerHTML = marked.parse(mod.readme_content);
+                    }
+                } else if (res.user && res.user.role === 'super_admin') {
+                    // Super Admin might view it directly
+                    const allRes = await api('/api/super-admin/modules');
+                    const mod = allRes.modules.find(m => m.id == moduleId);
+                    if (mod && mod.readme_content) {
+                        const btn = document.getElementById('module-instructions-btn');
+                        btn.classList.remove('hidden');
+                        document.getElementById('module-instructions-content').innerHTML = marked.parse(mod.readme_content);
+                    }
+                }
+            } catch(e) {
+                console.warn('Could not load module readme', e);
+            }
+        }
+
         // ==================== INITIALIZATION ====================
         document.addEventListener('DOMContentLoaded', () => {
+            loadCompanyAndModuleName();
+            loadCurrentModuleReadme();
             detectIframeMode();
         });
 
