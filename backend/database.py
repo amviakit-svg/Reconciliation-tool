@@ -444,7 +444,7 @@ def init_db():
     default_super_pw = auth.hash_password("admin123")
     
     # 1. Update existing template super admin, or insert if none
-    cursor = conn.execute("SELECT id FROM super_admin LIMIT 1")
+    cursor = conn.execute("SELECT id FROM super_admin WHERE email IN ('superadmin@deploy.com', 'admin@example.com') LIMIT 1")
     super_row = cursor.fetchone()
     if super_row:
         # If template.db was loaded, update its superadmin
@@ -454,11 +454,13 @@ def init_db():
             WHERE id = ?
         ''', ("superadmin@deploy.com", default_super_pw, "Deployment Super Admin", super_row[0]))
     else:
-        # If completely empty database
-        conn.execute('''
-            INSERT INTO super_admin (email, password_hash, name) 
-            VALUES (?, ?, ?)
-        ''', ("superadmin@deploy.com", default_super_pw, "Deployment Super Admin"))
+        cursor = conn.execute("SELECT COUNT(*) FROM super_admin")
+        if cursor.fetchone()[0] == 0:
+            # If completely empty database
+            conn.execute('''
+                INSERT INTO super_admin (email, password_hash, name) 
+                VALUES (?, ?, ?)
+            ''', ("superadmin@deploy.com", default_super_pw, "Deployment Super Admin"))
     
     # 2. Configure default company user (update template user or insert)
     default_user_pw = auth.hash_password("user123")
@@ -468,7 +470,7 @@ def init_db():
     role_row = role_cursor.fetchone()
     role_id = role_row[0] if role_row else None
 
-    cursor = conn.execute("SELECT id FROM users LIMIT 1")
+    cursor = conn.execute("SELECT id FROM users WHERE email IN ('user@deploy.com', 'user@example.com') LIMIT 1")
     user_row = cursor.fetchone()
     if user_row:
         # If template.db was loaded, update its default user
@@ -478,7 +480,9 @@ def init_db():
             WHERE id = ?
         ''', ("user@deploy.com", default_user_pw, "Deployment User", "Company Admin", role_id, user_row[0]))
     else:
-        # If completely empty, insert new company and user
+        cursor = conn.execute("SELECT COUNT(*) FROM companies")
+        if cursor.fetchone()[0] == 0:
+            # If completely empty, insert new company and user
         cursor = conn.execute('''
             INSERT INTO companies (name, code, email, status)
             VALUES (?, ?, ?, ?)
