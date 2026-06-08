@@ -4400,19 +4400,26 @@
             const primaryData = await apiCall('/api/primary/files');
             const rulesData1 = await apiCall('/api/rules/1');
             let primaryOption = '';
-            if (primaryData.success && primaryData.files && primaryData.files.length > 0) {
-                const sorted = primaryData.files.sort((a, b) => new Date(b.created) - new Date(a.created));
-                const latest = sorted[0];
-                let columnName = 'Primary Data';
-                let totalUnique = '';
-                if (rulesData1.success && rulesData1.rules && rulesData1.rules.length > 0) {
-                    try {
-                        const c = JSON.parse(rulesData1.rules[rulesData1.rules.length - 1].config);
-                        if (c.column) columnName = c.column;
-                        if (c.total_unique) totalUnique = ` (${c.total_unique.toLocaleString()} unique)`;
-                    } catch(e) {}
+            
+            let hasPhase1Rules = false;
+            let columnName = 'Primary Data';
+            let totalUnique = '';
+            if (rulesData1.success && rulesData1.rules && rulesData1.rules.length > 0) {
+                hasPhase1Rules = true;
+                try {
+                    const c = JSON.parse(rulesData1.rules[rulesData1.rules.length - 1].config);
+                    if (c.column) columnName = c.column;
+                    if (c.total_unique) totalUnique = ` (${c.total_unique.toLocaleString()} unique)`;
+                } catch(e) {}
+            }
+
+            if ((primaryData.success && primaryData.files && primaryData.files.length > 0) || hasPhase1Rules) {
+                let realName = 'Awaiting File Upload';
+                if (primaryData.success && primaryData.files && primaryData.files.length > 0) {
+                    const sorted = primaryData.files.sort((a, b) => new Date(b.created) - new Date(a.created));
+                    realName = sorted[0].name;
                 }
-                primaryOption = `<optgroup label="--- Primary Data (Latest) ---"><option value="primary_latest" data-primary="true" data-real-name="${latest.name}">Primary file${totalUnique}</option></optgroup>`;
+                primaryOption = `<optgroup label="--- Primary Data (Latest) ---"><option value="primary_latest" data-primary="true" data-real-name="${realName}">Primary file${totalUnique}</option></optgroup>`;
             }
             
             // Build file options HTML once

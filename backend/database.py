@@ -2125,7 +2125,6 @@ def clone_company_module(source_company_id: int, target_company_id: int, module_
             new_parent_id = folder_map.get(f['parent_id']) if f['parent_id'] else None
             
             # Generate correct new physical path for the new company
-            from database import get_user_folder_path
             path_result = get_user_folder_path(target_company_id, module_id, f['name'])
             new_path = path_result['path'] if path_result.get('success') else None
             
@@ -2157,10 +2156,26 @@ def clone_company_module(source_company_id: int, target_company_id: int, module_
                 
             new_db_path = f"data/master_dbs/folder_{folder_map[mf['folder_id']]}_{uuid.uuid4().hex[:8]}.duckdb"
             
-            # Physically copy the duckdb file if it exists
+            # Copy DuckDB file schema and 10 rows using DuckDB
             if os.path.exists(mf['db_path']):
                 os.makedirs(os.path.dirname(new_db_path), exist_ok=True)
-                shutil.copy2(mf['db_path'], new_db_path)
+                import duckdb
+                try:
+                    # Connect to new database, attach old one, and copy max 10 rows
+                    new_con = duckdb.connect(new_db_path)
+                    new_con.execute(f"ATTACH '{mf['db_path']}' AS old_db (READ_ONLY)")
+                    
+                    # Check if master_data table exists by trying to copy it
+                    try:
+                        new_con.execute("CREATE TABLE master_data AS SELECT * FROM old_db.main.master_data LIMIT 10")
+                    except duckdb.CatalogException:
+                        pass # old_db does not have master_data
+                    
+                    new_con.execute("DETACH old_db")
+                    new_con.close()
+                except Exception as e:
+                    logger.error(f"Failed to selectively clone DuckDB for {mf['db_path']}: {e}")
+                    # Fallback to empty if it fails
             
             cursor = conn.execute(
                 """INSERT INTO master_files (company_id, module_id, folder_id, db_path, sheet_name, columns, header_row, concat_columns, rejected_files, formulas, auto_sync)
@@ -2182,18 +2197,23 @@ def clone_company_module(source_company_id: int, target_company_id: int, module_
             if isinstance(obj, dict):
                 new_obj = {}
                 for k, v in obj.items():
-                    if k in ['secondary_file', 'extract_file'] and isinstance(v, str) and v.isdigit():
-                        new_obj[k] = str(master_file_map.get(int(v), v))
-                    elif k == 'file_id' and isinstance(v, str) and v.startswith('master_'):
-                        old_id_str = v.replace('master_', '')
-                        if old_id_str.isdigit():
-                            new_obj[k] = f"master_{master_file_map.get(int(old_id_str), old_id_str)}"
+                    if k in ['secondary_file', 'extract_file', 'primary_file', 'file_id'] and isinstance(v, str):
+                        # If it's a bare number, it's a folder ID
+                        if v.isdigit():
+                            new_obj[k] = str(folder_map.get(int(v), v))
+                        # If it starts with 'master_', the number after it is ALSO a folder ID!
+                        elif v.startswith('master_'):
+                            old_id_str = v.replace('master_', '')
+                            if old_id_str.isdigit():
+                                new_obj[k] = f"master_{folder_map.get(int(old_id_str), old_id_str)}"
+                            else:
+                                new_obj[k] = v
                         else:
                             new_obj[k] = v
-                    elif k == 'file_id' and isinstance(v, str) and v.isdigit():
-                        new_obj[k] = str(master_file_map.get(int(v), v))
-                    else:
+                    elif isinstance(v, list) or isinstance(v, dict):
                         new_obj[k] = remap_json_ids(v)
+                    else:
+                        new_obj[k] = v
                 return new_obj
             elif isinstance(obj, list):
                 return [remap_json_ids(item) for item in obj]
