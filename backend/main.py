@@ -1719,12 +1719,14 @@ async def get_active_syncs(current_user: Optional[dict] = Depends(get_optional_u
             JOIN folders fo ON f.folder_id = fo.id
             WHERE f.sync_status IN ('in_processing', 'pending')
         '''
+        params = []
         
         # If we have user isolation, apply it
-        if current_user:
-            query += f" AND f.company_id = {current_user.get('company_id', 1)}"
+        if current_user and current_user.get('company_id'):
+            query += " AND f.company_id = ?"
+            params.append(current_user.get('company_id'))
             
-        active_files = conn.execute(query).fetchall()
+        active_files = conn.execute(query, params).fetchall()
         
         result = [
             {
