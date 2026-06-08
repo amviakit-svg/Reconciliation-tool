@@ -1756,9 +1756,11 @@ async def get_active_syncs(current_user: Optional[dict] = Depends(get_optional_u
         # Now check for pending deletions (files in DuckDB but not in SQLite files)
         import os
         master_query = 'SELECT folder_id, db_path FROM master_files'
-        if current_user:
-            master_query += f" WHERE company_id = {current_user.get('company_id', 1)}"
-        masters = conn.execute(master_query).fetchall()
+        params = []
+        if current_user and current_user.get('company_id'):
+            master_query += " WHERE company_id = ?"
+            params.append(current_user.get('company_id'))
+        masters = conn.execute(master_query, params).fetchall()
         
         for master in masters:
             db_path = master['db_path']

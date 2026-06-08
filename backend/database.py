@@ -462,15 +462,21 @@ def init_db():
     
     # 2. Configure default company user (update template user or insert)
     default_user_pw = auth.hash_password("user123")
+    
+    # Get Company Admin role ID
+    role_cursor = conn.execute("SELECT id FROM roles WHERE name = 'Company Admin' LIMIT 1")
+    role_row = role_cursor.fetchone()
+    role_id = role_row[0] if role_row else None
+
     cursor = conn.execute("SELECT id FROM users LIMIT 1")
     user_row = cursor.fetchone()
     if user_row:
         # If template.db was loaded, update its default user
         conn.execute('''
             UPDATE users 
-            SET email = ?, password_hash = ?, name = ? 
+            SET email = ?, password_hash = ?, name = ?, role = ?, role_id = ?
             WHERE id = ?
-        ''', ("user@deploy.com", default_user_pw, "Deployment User", user_row[0]))
+        ''', ("user@deploy.com", default_user_pw, "Deployment User", "Company Admin", role_id, user_row[0]))
     else:
         # If completely empty, insert new company and user
         cursor = conn.execute('''
@@ -1208,6 +1214,40 @@ def get_role_by_id(role_id):
         else:
             role[field] = []
     return role
+
+
+def update_role(role_id, **kwargs):
+    if not kwargs:
+        return
+    
+    conn = get_db_connection()
+    set_clause = ", ".join([f"{k} = ?" for k in kwargs.keys()])
+    values = []
+    for k, v in kwargs.items():
+        if isinstance(v, (dict, list)):
+            values.append(json.dumps(v))
+        else:
+            values.append(v)
+    values.append(role_id)
+    
+    conn.execute(f'UPDATE roles SET {set_clause} WHERE id = ?', values)
+    conn.commit()
+    conn.close()
+
+
+def delete_role(role_id):
+    conn = get_db_connection()
+    # Check if any users are using this role
+    cursor = conn.execute("SELECT COUNT(*) FROM users WHERE role_id = ?", (role_id,))
+    count = cursor.fetchone()[0]
+    if count > 0:
+        conn.close()
+        return False
+        
+    conn.execute('DELETE FROM roles WHERE id = ? AND is_default = 0', (role_id,))
+    conn.commit()
+    conn.close()
+    return True
 
 
 def update_last_login(user_id, is_super_admin=False):
