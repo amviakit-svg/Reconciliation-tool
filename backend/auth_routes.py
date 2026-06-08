@@ -124,6 +124,12 @@ async def login(
     user_module_ids = get_user_assigned_module_ids(user['id'])
     role_id = user.get('role_id')
     
+    page_permissions = []
+    if role_id:
+        role_data = get_role_by_id(role_id)
+        if role_data and role_data.get('page_permissions'):
+            page_permissions = role_data['page_permissions']
+    
     # If user has no assigned modules, default to company's first module
     if user_module_ids:
         module_id = user_module_ids[0] if user_module_ids[0] in [m['id'] for m in modules] else (modules[0]['id'] if modules else None)
@@ -170,7 +176,8 @@ async def login(
             "company_name": company['name'],
             "company_code": company['code'],
             "module_id": module_id,
-            "first_login": bool(user.get('first_login', 0))
+            "first_login": bool(user.get('first_login', 0)),
+            "page_permissions": page_permissions
         },
         "modules": user_modules,
         "requires_password_change": bool(user.get('first_login', 0)),
@@ -374,6 +381,14 @@ async def update_profile(
 @router.get("/verify")
 async def verify_token(current_user: dict = Depends(get_current_active_user)):
     """Verify if current token is valid and return user info."""
+    page_permissions = []
+    role_id = current_user.get('role_id')
+    if role_id:
+        from database import get_role_by_id
+        role_data = get_role_by_id(role_id)
+        if role_data and role_data.get('page_permissions'):
+            page_permissions = role_data['page_permissions']
+            
     return {
         "success": True,
         "authenticated": True,
@@ -382,9 +397,11 @@ async def verify_token(current_user: dict = Depends(get_current_active_user)):
             "email": current_user['email'],
             "name": current_user.get('name', ''),
             "role": current_user['role'],
+            "role_id": role_id,
             "company_id": current_user.get('company_id'),
             "module_id": current_user.get('module_id'),
-            "first_login": current_user.get('first_login', False)
+            "first_login": current_user.get('first_login', False),
+            "page_permissions": page_permissions
         }
     }
 

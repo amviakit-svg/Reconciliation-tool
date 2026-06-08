@@ -8359,7 +8359,7 @@
             
             try {
                 // We'll use the user's available modules to find this one
-                const res = await api('/api/auth/me');
+                const res = await api('/api/auth/verify');
                 if (res.user && res.user.role === 'admin' && res.user.company_id == companyId) {
                     const modulesRes = await api('/api/company/modules');
                     const mod = modulesRes.modules.find(m => m.id == moduleId);

@@ -2059,38 +2059,61 @@ function initCompanyUser() {
     
     const role = currentUser.role;
     const nav = document.getElementById('sidebar-nav');
-    let navHTML = `
-        <a href="#" onclick="navigateTo('dashboard')" class="sidebar-link active flex items-center gap-3 px-3 py-2.5 text-sm font-medium" data-page="dashboard">
-            <i class="fas fa-tachometer-alt w-5"></i><span class="sidebar-text">Company Insight</span>
-        </a>
-    `;
+    const perms = currentUser.page_permissions || [];
+    const hasPerm = (p) => perms.includes(p) || role === 'super_admin';
     
-    // Dashboard - all roles
-    navHTML += `
-        <a href="#" onclick="navigateTo('primary')" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium" data-page="primary">
-            <i class="fas fa-database w-5"></i><span class="sidebar-text">Dashboard</span>
-        </a>
-    `;
+    let navHTML = '';
     
-    if (role === 'editor' || role === 'admin') {
+    if (hasPerm('dashboard') || role === 'admin' || role === 'editor' || role === 'viewer') {
+        navHTML += `
+            <a href="#" onclick="navigateTo('dashboard')" class="sidebar-link active flex items-center gap-3 px-3 py-2.5 text-sm font-medium" data-page="dashboard">
+                <i class="fas fa-tachometer-alt w-5"></i><span class="sidebar-text">Company Insight</span>
+            </a>
+        `;
+    }
+    
+    if (hasPerm('primary_data') || role === 'admin' || role === 'editor' || role === 'viewer') {
+        navHTML += `
+            <a href="#" onclick="navigateTo('primary')" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium" data-page="primary">
+                <i class="fas fa-database w-5"></i><span class="sidebar-text">Dashboard</span>
+            </a>
+        `;
+    }
+    
+    if (hasPerm('upload_files') || role === 'editor' || role === 'admin') {
         navHTML += `
             <a href="#" onclick="navigateTo('upload')" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium" data-page="upload">
                 <i class="fas fa-cloud-upload-alt w-5"></i><span class="sidebar-text">Upload & Files</span>
             </a>
+        `;
+    }
+    
+    if (hasPerm('rule_mapping') || role === 'editor' || role === 'admin') {
+        navHTML += `
             <a href="#" onclick="navigateTo('rules')" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium" data-page="rules">
                 <i class="fas fa-project-diagram w-5"></i><span class="sidebar-text">Rule Mapping</span>
             </a>
+        `;
+    }
+    
+    if (hasPerm('final_processing') || role === 'editor' || role === 'admin') {
+        navHTML += `
             <a href="#" onclick="navigateTo('processing')" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium" data-page="processing">
                 <i class="fas fa-play-circle w-5"></i><span class="sidebar-text">Final Processing</span>
             </a>
         `;
     }
     
-    if (role === 'admin') {
+    if (hasPerm('user_management') || role === 'admin') {
         navHTML += `
             <a href="#" onclick="navigateTo('users')" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium" data-page="users">
                 <i class="fas fa-users-cog w-5"></i><span class="sidebar-text">User Management</span>
             </a>
+        `;
+    }
+    
+    if (hasPerm('recycle_bin') || role === 'admin') {
+        navHTML += `
             <a href="#" onclick="navigateTo('recycle-bin')" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium" data-page="recycle-bin">
                 <i class="fas fa-trash-alt w-5"></i><span class="sidebar-text">Recycle Bin</span>
             </a>
