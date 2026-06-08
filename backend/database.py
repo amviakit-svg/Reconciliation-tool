@@ -438,7 +438,65 @@ def init_db():
         conn.execute('''
             INSERT OR IGNORE INTO website_settings (setting_key, setting_value, setting_group) VALUES (?, ?, ?)
         ''', (key, value, group))
+        
+    # --- DEPLOYMENT SEEDER: Configure Default Accounts ---
+    import auth  # Local import to avoid circular dependency
+    default_super_pw = auth.hash_password("admin123")
     
+    # 1. Update existing template super admin, or insert if none
+    cursor = conn.execute("SELECT id FROM super_admin LIMIT 1")
+    super_row = cursor.fetchone()
+    if super_row:
+        # If template.db was loaded, update its superadmin
+        conn.execute('''
+            UPDATE super_admin 
+            SET email = ?, password_hash = ?, name = ? 
+            WHERE id = ?
+        ''', ("superadmin@deploy.com", default_super_pw, "Deployment Super Admin", super_row[0]))
+    else:
+        # If completely empty database
+        conn.execute('''
+            INSERT INTO super_admin (email, password_hash, name) 
+            VALUES (?, ?, ?)
+        ''', ("superadmin@deploy.com", default_super_pw, "Deployment Super Admin"))
+    
+    # 2. Configure default company user (update template user or insert)
+    default_user_pw = auth.hash_password("user123")
+    cursor = conn.execute("SELECT id FROM users LIMIT 1")
+    user_row = cursor.fetchone()
+    if user_row:
+        # If template.db was loaded, update its default user
+        conn.execute('''
+            UPDATE users 
+            SET email = ?, password_hash = ?, name = ? 
+            WHERE id = ?
+        ''', ("user@deploy.com", default_user_pw, "Deployment User", user_row[0]))
+    else:
+        # If completely empty, insert new company and user
+        cursor = conn.execute('''
+            INSERT INTO companies (name, code, email, status)
+            VALUES (?, ?, ?, ?)
+        ''', ("Deployed Company", "DEP001", "company@deploy.com", "active"))
+        default_company_id = cursor.lastrowid
+        
+        role_cursor = conn.execute("SELECT id FROM roles WHERE name = 'Company Admin' LIMIT 1")
+        role_row = role_cursor.fetchone()
+        role_id = role_row[0] if role_row else None
+        
+        conn.execute('''
+            INSERT INTO users (company_id, email, password_hash, name, role, role_id, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (default_company_id, "user@deploy.com", default_user_pw, "Deployment User", "Company Admin", role_id, "active"))
+        
+        for module_code in ["OWN_WEBSITE", "AMAZON", "FLIPKART", "MEESHO", "MYNTRA", "HYPD"]:
+            mod_cursor = conn.execute("SELECT id FROM modules WHERE code = ?", (module_code,))
+            mod_row = mod_cursor.fetchone()
+            if mod_row:
+                conn.execute('''
+                    INSERT OR IGNORE INTO company_modules (company_id, module_id)
+                    VALUES (?, ?)
+                ''', (default_company_id, mod_row[0]))
+                
     conn.commit()
     conn.close()
 

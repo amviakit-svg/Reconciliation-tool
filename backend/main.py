@@ -210,6 +210,14 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup_event():
     try:
+        import os, shutil
+        db_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'metadata.db')
+        template_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'template.db')
+        if not os.path.exists(db_path) and os.path.exists(template_path):
+            os.makedirs(os.path.dirname(db_path), exist_ok=True)
+            shutil.copy2(template_path, db_path)
+            logger.info("Successfully initialized metadata.db from template.db!")
+            
         from database import init_db, cleanup_old_notifications
         init_db()
         logger.info("Database initialized successfully.")
