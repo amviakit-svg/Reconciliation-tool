@@ -470,15 +470,26 @@ def init_db():
     role_row = role_cursor.fetchone()
     role_id = role_row[0] if role_row else None
 
-    cursor = conn.execute("SELECT id FROM users WHERE email IN ('user@deploy.com', 'user@example.com') LIMIT 1")
+    cursor = conn.execute("SELECT id, company_id FROM users WHERE email IN ('user@deploy.com', 'user@example.com') LIMIT 1")
     user_row = cursor.fetchone()
     if user_row:
+        user_id = user_row[0]
         # If template.db was loaded, update its default user
         conn.execute('''
             UPDATE users 
             SET email = ?, password_hash = ?, name = ?, role = ?, role_id = ?
             WHERE id = ?
-        ''', ("user@deploy.com", default_user_pw, "Deployment User", "Company Admin", role_id, user_row[0]))
+        ''', ("user@deploy.com", default_user_pw, "Deployment User", "admin", role_id, user_id))
+        
+        # Ensure the user has access to all modules
+        for module_code in ["OWN_WEBSITE", "AMAZON", "FLIPKART", "MEESHO", "MYNTRA", "HYPD"]:
+            mod_cursor = conn.execute("SELECT id FROM modules WHERE code = ?", (module_code,))
+            mod_row = mod_cursor.fetchone()
+            if mod_row:
+                conn.execute('''
+                    INSERT OR IGNORE INTO user_modules (user_id, module_id)
+                    VALUES (?, ?)
+                ''', (user_id, mod_row[0]))
     else:
         cursor = conn.execute("SELECT COUNT(*) FROM companies")
         if cursor.fetchone()[0] == 0:
@@ -496,7 +507,8 @@ def init_db():
             conn.execute('''
                 INSERT INTO users (company_id, email, password_hash, name, role, role_id, status)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (default_company_id, "user@deploy.com", default_user_pw, "Deployment User", "Company Admin", role_id, "active"))
+            ''', (default_company_id, "user@deploy.com", default_user_pw, "Deployment User", "admin", role_id, "active"))
+            default_user_id = cursor.lastrowid
             
             for module_code in ["OWN_WEBSITE", "AMAZON", "FLIPKART", "MEESHO", "MYNTRA", "HYPD"]:
                 mod_cursor = conn.execute("SELECT id FROM modules WHERE code = ?", (module_code,))
@@ -506,6 +518,11 @@ def init_db():
                         INSERT OR IGNORE INTO company_modules (company_id, module_id)
                         VALUES (?, ?)
                     ''', (default_company_id, mod_row[0]))
+                    
+                    conn.execute('''
+                        INSERT OR IGNORE INTO user_modules (user_id, module_id)
+                        VALUES (?, ?)
+                    ''', (default_user_id, mod_row[0]))
                 
     conn.commit()
     conn.close()
