@@ -483,29 +483,29 @@ def init_db():
         cursor = conn.execute("SELECT COUNT(*) FROM companies")
         if cursor.fetchone()[0] == 0:
             # If completely empty, insert new company and user
-        cursor = conn.execute('''
-            INSERT INTO companies (name, code, email, status)
-            VALUES (?, ?, ?, ?)
-        ''', ("Deployed Company", "DEP001", "company@deploy.com", "active"))
-        default_company_id = cursor.lastrowid
-        
-        role_cursor = conn.execute("SELECT id FROM roles WHERE name = 'Company Admin' LIMIT 1")
-        role_row = role_cursor.fetchone()
-        role_id = role_row[0] if role_row else None
-        
-        conn.execute('''
-            INSERT INTO users (company_id, email, password_hash, name, role, role_id, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (default_company_id, "user@deploy.com", default_user_pw, "Deployment User", "Company Admin", role_id, "active"))
-        
-        for module_code in ["OWN_WEBSITE", "AMAZON", "FLIPKART", "MEESHO", "MYNTRA", "HYPD"]:
-            mod_cursor = conn.execute("SELECT id FROM modules WHERE code = ?", (module_code,))
-            mod_row = mod_cursor.fetchone()
-            if mod_row:
-                conn.execute('''
-                    INSERT OR IGNORE INTO company_modules (company_id, module_id)
-                    VALUES (?, ?)
-                ''', (default_company_id, mod_row[0]))
+            cursor = conn.execute('''
+                INSERT INTO companies (name, code, email, status)
+                VALUES (?, ?, ?, ?)
+            ''', ("Deployed Company", "DEP001", "company@deploy.com", "active"))
+            default_company_id = cursor.lastrowid
+            
+            role_cursor = conn.execute("SELECT id FROM roles WHERE name = 'Company Admin' LIMIT 1")
+            role_row = role_cursor.fetchone()
+            role_id = role_row[0] if role_row else None
+            
+            conn.execute('''
+                INSERT INTO users (company_id, email, password_hash, name, role, role_id, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (default_company_id, "user@deploy.com", default_user_pw, "Deployment User", "Company Admin", role_id, "active"))
+            
+            for module_code in ["OWN_WEBSITE", "AMAZON", "FLIPKART", "MEESHO", "MYNTRA", "HYPD"]:
+                mod_cursor = conn.execute("SELECT id FROM modules WHERE code = ?", (module_code,))
+                mod_row = mod_cursor.fetchone()
+                if mod_row:
+                    conn.execute('''
+                        INSERT OR IGNORE INTO company_modules (company_id, module_id)
+                        VALUES (?, ?)
+                    ''', (default_company_id, mod_row[0]))
                 
     conn.commit()
     conn.close()
