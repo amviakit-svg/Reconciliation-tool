@@ -218,6 +218,48 @@ async def startup_event():
             shutil.copy2(template_path, db_path)
             logger.info("Successfully initialized metadata.db from template.db!")
             
+            # --- Auto-Deployment Path & Data Restoration ---
+            import sqlite3
+            try:
+                base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                target_uploads_dir = os.path.join(base_dir, 'data', 'uploads')
+                template_data_dir = os.path.join(base_dir, 'data', 'template_master_dbs')
+                
+                # 1. Copy Physical Master DBs
+                if os.path.exists(template_data_dir):
+                    shutil.copytree(template_data_dir, target_uploads_dir, dirs_exist_ok=True)
+                    logger.info("Restored 10-line template physical master databases.")
+                
+                # 2. Re-path Absolute Database URLs
+                conn = sqlite3.connect(db_path)
+                cursor = conn.cursor()
+                
+                # Update master_files
+                cursor.execute("SELECT id, db_path FROM master_files WHERE db_path IS NOT NULL")
+                for m_id, path in cursor.fetchall():
+                    # Support both slash types
+                    norm_path = path.replace('\\', '/')
+                    if '/data/uploads/' in norm_path:
+                        rel_path = norm_path.split('/data/uploads/')[1]
+                        new_abs_path = os.path.join(target_uploads_dir, rel_path.replace('/', os.sep))
+                        conn.execute("UPDATE master_files SET db_path = ? WHERE id = ?", (new_abs_path, m_id))
+                        
+                # Update files (if any templates exist)
+                cursor.execute("SELECT id, file_path FROM files WHERE file_path IS NOT NULL")
+                for f_id, path in cursor.fetchall():
+                    norm_path = path.replace('\\', '/')
+                    if '/data/uploads/' in norm_path:
+                        rel_path = norm_path.split('/data/uploads/')[1]
+                        new_abs_path = os.path.join(target_uploads_dir, rel_path.replace('/', os.sep))
+                        conn.execute("UPDATE files SET file_path = ? WHERE id = ?", (new_abs_path, f_id))
+                        
+                conn.commit()
+                conn.close()
+                logger.info("Successfully re-mapped all absolute file paths for the current environment.")
+            except Exception as e:
+                logger.error(f"Error during template path restoration: {e}")
+            # ---------------------------------------------
+            
         from database import init_db, cleanup_old_notifications
         init_db()
         logger.info("Database initialized successfully.")
