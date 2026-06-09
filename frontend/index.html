@@ -2158,9 +2158,10 @@
                             console.groupEnd();
                         }
                         
-                        // Attach suggestion to the error for later use
+                        // Attach suggestion and raw data to the error for later use
                         const err = new Error(errorMsg);
                         err.suggestion = suggestion;
+                        err.rawData = errorData;
                         throw err;
                     }
                     
@@ -2578,6 +2579,28 @@
                         showToast(`Failed to upload: ${file.name}`, 'error');
                     }
                 } catch (error) {
+                    if (error.rawData && error.rawData.prompt_replace) {
+                        if (confirm(`File "${file.name}" already exists. Do you want to replace it?`)) {
+                            formData.append('replace', 'true');
+                            try {
+                                const data2 = await apiCall('/api/upload', {
+                                    method: 'POST',
+                                    body: formData
+                                });
+                                if (data2.success) {
+                                    showToast(`Replaced: ${file.name}`, 'success');
+                                } else {
+                                    showToast(`Failed to replace: ${file.name}`, 'error');
+                                }
+                            } catch (e2) {
+                                showToast(`Error replacing: ${file.name}`, 'error');
+                            }
+                            continue;
+                        } else {
+                            showToast(`Upload cancelled: ${file.name}`, 'info');
+                            continue;
+                        }
+                    }
                     showToast(`Error uploading: ${file.name}`, 'error');
                 }
             }
@@ -2782,6 +2805,7 @@
                             <p class="text-xs text-gray-500">${formatFileSize(file.size)} • ${file.format} • ${file.sheet_count} sheets</p>
                             ${getSyncStatusBadge(file)}
                         </div>
+                        <p class="text-xs text-gray-400 mt-0.5">Uploaded by: ${file.uploaded_by_name || 'System'}</p>
                     </div>
                     <div class="flex items-center space-x-1">
                         <button onclick="event.stopPropagation(); showFileDetails(${file.id})" class="p-1.5 text-gray-400 hover:text-blue-600 rounded-lg hover:bg-blue-50 transition-colors" title="View Details">

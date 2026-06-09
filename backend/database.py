@@ -595,7 +595,11 @@ def get_files_by_folder(folder_id):
     import json
     conn = get_db_connection()
     rows = conn.execute(
-        'SELECT * FROM files WHERE folder_id = ? ORDER BY created_at DESC',
+        '''SELECT f.*, u.name as uploaded_by_name 
+           FROM files f 
+           LEFT JOIN users u ON f.uploaded_by = u.id 
+           WHERE f.folder_id = ? 
+           ORDER BY f.created_at DESC''',
         (folder_id,)
     ).fetchall()
     conn.close()

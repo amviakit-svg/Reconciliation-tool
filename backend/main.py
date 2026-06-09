@@ -873,6 +873,7 @@ async def upload_file(
     folder_id: str = Form("1"),
     header_row: str = Form("1"),
     folder_path: Optional[str] = Form(None),
+    replace: bool = Form(False),
     current_user: Optional[dict] = Depends(get_optional_user)
 ):
     try:
@@ -906,8 +907,43 @@ async def upload_file(
         
         # Check for duplicates
         if os.path.exists(file_path):
-            err = format_storage_error("file_exists", {"name": original_filename})
-            return JSONResponse(status_code=409, content=err)
+            if not replace:
+                from database import add_notification
+                uid = current_user.get('id') if current_user else None
+                add_notification(cid, mid, "duplicate_upload", f"Duplicate file '{original_filename}' upload attempted.", user_id=uid)
+                
+                err = format_storage_error("file_exists", {"name": original_filename, "prompt_replace": True})
+                return JSONResponse(status_code=409, content=err)
+            else:
+                # We are replacing. Move old file to recycle bin and delete DB record.
+                conn = get_db_connection()
+                old_file = conn.execute("SELECT id, original_name FROM files WHERE folder_id = ? AND original_name = ?", (folder_id_int, original_filename)).fetchone()
+                if old_file:
+                    import time
+                    new_path = f"{file_path}.deleted.{int(time.time())}"
+                    try:
+                        os.rename(file_path, new_path)
+                    except OSError:
+                        new_path = file_path
+                    
+                    move_to_recycle_bin(
+                        company_id=cid,
+                        entity_type='file',
+                        entity_id=old_file['id'],
+                        entity_name=old_file['original_name'],
+                        original_path=new_path,
+                        deleted_by=current_user.get('id') if current_user else None
+                    )
+                    conn.execute("DELETE FROM files WHERE id = ?", (old_file['id'],))
+                    conn.commit()
+                else:
+                    # If file exists on disk but not in DB, rename it so we can write the new one
+                    import time
+                    try:
+                        os.rename(file_path, f"{file_path}.deleted.{int(time.time())}")
+                    except OSError:
+                        pass
+                conn.close()
         
         # Check path length
         if len(file_path) > 260:
