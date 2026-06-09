@@ -27,7 +27,7 @@ if not exist venv (
 :: ---- CHECK FOR ALREADY RUNNING INSTANCE ----
 echo Checking for existing server instance...
 set "SERVER_RUNNING=0"
-for /f "tokens=*" %%a in ('wmic process where "CommandLine like '%%uvicorn%%backend.main%%'" get ProcessId 2^>nul ^| findstr /r "[0-9]"') do (
+for /f "tokens=5" %%a in ('netstat -ano ^| find "LISTENING" ^| find ":8000"') do (
     set "SERVER_RUNNING=1"
     set "EXISTING_PID=%%a"
 )
@@ -35,13 +35,13 @@ for /f "tokens=*" %%a in ('wmic process where "CommandLine like '%%uvicorn%%back
 if "%SERVER_RUNNING%"=="1" (
     echo.
     echo ==========================================
-    echo  SERVER ALREADY RUNNING
+    echo  SERVER ALREADY RUNNING ON PORT 8000
     echo ==========================================
     echo.
     echo Existing PID: %EXISTING_PID%
     echo URL: http://localhost:8000
     echo.
-    echo To stop: taskkill /f /im python.exe
+    echo To stop: taskkill /f /pid %EXISTING_PID%
     echo.
     pause
     exit /b 0
