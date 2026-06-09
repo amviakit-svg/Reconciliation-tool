@@ -380,6 +380,8 @@ def init_db():
         ("master_files", "formulas", "TEXT"),
         ("companies", "status", "TEXT DEFAULT 'active'"),
         ("modules", "status", "TEXT DEFAULT 'active'"),
+        ("modules", "template_company_id", "INTEGER"),
+        ("modules", "readme_content", "TEXT"),
         ("company_modules", "status", "TEXT DEFAULT 'active'"),
         ("users", "status", "TEXT DEFAULT 'active'"),
         ("super_admin", "status", "TEXT DEFAULT 'active'"),

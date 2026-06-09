@@ -1612,6 +1612,36 @@ async function saveTemplate(e) {
     }
 }
 
+function openReadmeModal(moduleId, moduleName, currentReadme) {
+    document.getElementById('readme-module-id').value = moduleId;
+    document.getElementById('readme-module-name').textContent = moduleName;
+    document.getElementById('readme-content').value = currentReadme || '';
+    document.getElementById('readme-modal').classList.remove('hidden');
+}
+
+function closeReadmeModal() {
+    document.getElementById('readme-modal').classList.add('hidden');
+    document.getElementById('readme-form').reset();
+}
+
+async function saveReadme(e) {
+    e.preventDefault();
+    const moduleId = document.getElementById('readme-module-id').value;
+    const content = document.getElementById('readme-content').value;
+    
+    try {
+        const formData = new FormData();
+        formData.append('readme_content', content);
+        
+        const data = await api(`/api/super-admin/modules/${moduleId}/readme`, { method: 'POST', body: formData });
+        showToast(data.message, 'success');
+        closeReadmeModal();
+        loadModules(); // Reload to update UI
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
 let editingCompanyId = null;
 
 function openCompanyModal() {
